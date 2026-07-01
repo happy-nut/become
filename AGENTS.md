@@ -1,6 +1,6 @@
 # 라이트너 학습 시스템 (범용 템플릿)
 
-<!-- 엔진 버전: 1.0.0 -->
+<!-- 엔진 버전: 1.1.0 -->
 
 > **이 파일이 학습 엔진의 정본(canonical)이다.** 어떤 AI 코딩 에이전트든 — Claude Code, OpenAI Codex,
 > Cursor, GitHub Copilot, Gemini CLI 등 — 이 `AGENTS.md`를 읽고 그대로 따르면 학습 코치로 동작한다.
@@ -28,8 +28,8 @@ AI 코치가 별도 프로그램 없이 학습 코치로 직접 동작한다.
 **카드의 박스 위치는 오직 디렉토리가 진실이다.**
 
 - 어떤 카드가 어느 박스에 있는지는 그 파일이 `box1/`~`box4/` 중 어디에 있는지로만 결정된다.
-- `state.json`에는 `box` 필드를 두지 않는다. 통계(정답/오답/연속정답/마지막 학습일)만 담는다.
-- 박스 이동 = `mv` 한 번. 따라서 디렉토리와 state.json이 어긋날 원천이 없다.
+- `state.tsv`에는 `box` 필드를 두지 않는다. 통계(정답/오답/연속정답/마지막 학습일)만 담는다.
+- 박스 이동 = `mv` 한 번. 따라서 디렉토리와 state.tsv이 어긋날 원천이 없다.
 - 박스 현황은 항상 `ls box*/` 로 센다.
 
 ---
@@ -107,26 +107,23 @@ box4/    간격 30 학습일 (가끔 재확인)
 
 ---
 
-## state.json 형식
+## state.tsv 형식 (통계 저장 — 토큰 절약을 위해 TSV)
 
-```json
-{
-  "study_day": 0,
-  "last_session_date": null,
-  "session_count": 0,
-  "cards": {
-    "카드id": {
-      "consecutive_correct": 0,
-      "times_correct": 0,
-      "times_wrong": 0,
-      "last_study_day": null
-    }
-  }
-}
+통계는 `state.tsv`에 **탭 구분, 카드당 한 줄**로 담는다. JSON이 아니라 TSV인 이유는 매 세션 전량을 읽기 때문에 토큰을 아끼려는 것이다. `#`로 시작하는 줄은 주석/헤더다.
+
+```
+# study_day=0	last_session_date=	session_count=0
+# id	consecutive_correct	times_correct	times_wrong	last_study_day
+jvm_memory_layout	0	0	0	
+g1gc	3	5	1	12
 ```
 
+- **1번째 줄**(전역 메타): `study_day` / `last_session_date`(비면 미설정) / `session_count`. 세션마다 이 줄만 갱신한다.
+- **2번째 줄**: 컬럼 헤더(고정).
+- **카드 줄**: `id ⇥ consecutive_correct ⇥ times_correct ⇥ times_wrong ⇥ last_study_day`. `last_study_day`가 비어 있으면 `null`(미학습)이다.
 - `study_day`: 학습한 고유 날짜 수. **세션 횟수가 아니라 접속한 날의 수**다. 하루에 몇 세션을 하든 하루에 한 번만 오른다.
 - 카드에 `box` 필드는 없다 (디렉토리가 진실). `type` 등 카드 성격은 카드 파일 frontmatter에만 있다.
+- 카드 추가 = 줄 추가, 통계 갱신 = 해당 줄 수정. **파일 전체를 다시 쓰지 말고 필요한 줄만 편집**한다.
 
 ---
 
@@ -161,7 +158,7 @@ box4/    간격 30 학습일 (가끔 재확인)
 
 라이트너 박스는 이미 에빙하우스 망각 곡선의 계단식 근사다(간격이 승격마다 늘어남). 여기에 곡선의 두 통찰만 얹는다. **곡선은 오직 "언제 다시 꺼낼지"에만 쓴다.**
 
-**단일 진실 규칙은 그대로다.** 난이도는 `state.json`에 저장하지 않고 기존 통계에서 **파생**한다.
+**단일 진실 규칙은 그대로다.** 난이도는 `state.tsv`에 저장하지 않고 기존 통계에서 **파생**한다.
 
 ### 1. 난이도 계수 (카드마다, 통계에서 파생)
 
@@ -198,7 +195,7 @@ box4/    간격 30 학습일 (가끔 재확인)
 ## 세션 시작 절차
 
 1. `PROFILE.md` 읽기 (미설정이면 "세션 0 부트스트랩" 먼저)
-2. state.json 읽기
+2. state.tsv 읽기
 3. 학습일(study_day) 규칙 적용
 4. `ls box*/` 로 만기 카드 전부 선정한 뒤, **연체율 내림차순**으로 정렬 (만기 판정도 카드별 조정 간격을 쓴다)
 5. 세션 안내 출력:
@@ -264,10 +261,10 @@ box4/    간격 30 학습일 (가끔 재확인)
 
 1. **정답/오답 판정 반영**: consecutive_correct / times_correct / times_wrong 갱신, `last_study_day = study_day`.
 2. **박스 이동**: 연속정답 2회면 다음 박스로 `mv` + 카운트 리셋. 틀림이면 box1으로 `mv` + 카운트 리셋.
-3. **새 카드 생성**: 질문했거나 막힌 항목을 box1/에 카드로 생성(`type` 자동 판정), 기존 카드와 related 양방향 연결, state.json 등록. (이미 있으면 보강)
+3. **새 카드 생성**: 질문했거나 막힌 항목을 box1/에 카드로 생성(`type` 자동 판정), 기존 카드와 related 양방향 연결, state.tsv 등록. (이미 있으면 보강)
 4. **related 업데이트**: 이번 대화에서 드러난 연결 관계를 양쪽 카드에 추가.
 5. **카드 내용 보강**: 새 관점·예문이 있으면 카드 하단에 추가.
-6. **state.json 저장** (카드 1개 끝날 때마다 — 세션 중단돼도 진행분 안전).
+6. **state.tsv 저장** (카드 1개 끝날 때마다 — 세션 중단돼도 진행분 안전).
 7. 변경사항 한 줄 요약 출력.
 
 git 커밋은 세션 전체가 끝났을 때 한 번만 한다.
@@ -304,7 +301,7 @@ created: 2026-07-01
 
 이 레포는 공개 템플릿 `happy-nut/study-template`에서 파생됐다. GitHub 템플릿은 fork가 아니라서
 **자동 동기화 연결이 없다.** 엔진 파일(`AGENTS.md` / `CLAUDE.md` / `GEMINI.md`)만 골라서 최신본을 받으면 된다.
-**`PROFILE.md`, `box*/`, `state.json`(= 사용자 데이터)은 절대 건드리지 않는다.**
+**`PROFILE.md`, `box*/`, `state.tsv`(= 사용자 데이터)은 절대 건드리지 않는다.**
 
 사용자가 **"엔진 업데이트"** / **"update engine"** 이라고 하면 코치는 다음을 수행한다:
 
