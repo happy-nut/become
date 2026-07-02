@@ -1,6 +1,6 @@
 # 라이트너 학습 시스템 (범용 템플릿)
 
-<!-- 엔진 버전: 1.2.1 -->
+<!-- 엔진 버전: 1.2.2 -->
 
 > **이 파일이 학습 엔진의 정본(canonical)이다.** 어떤 AI 코딩 에이전트든 — Claude Code, OpenAI Codex,
 > Cursor, GitHub Copilot, Gemini CLI 등 — 이 `AGENTS.md`를 읽고 그대로 따르면 학습 코치로 동작한다.
@@ -229,8 +229,9 @@ g1gc	3	5	1	12
 박스가 비었거나 빠르게 채우고 싶을 때 쓰는 더 강한 버전. **특정 면접관 페르소나가 되어 꼬리 질문을 상한 없이 쏟아내며, 학습자가 막히는 경계를 찾아 그 자리에서 box1 카드로 시딩**한다. 초보/심화로 나누지 않고 연속적인 꼬리 질문으로 경계를 매핑한다.
 
 - 전체 절차는 `.claude/skills/mock-interview/SKILL.md`에 있다.
-- **Claude Code**: `/mock-interview` 로 호출되거나 "면접 난사"·"질문 난사"·"모의면접"·"털어줘" 트리거로 진입.
-- **다른 에이전트(Codex·Gemini·Cursor 등)**: 사용자가 그런 요청을 하면 위 `SKILL.md` 파일을 읽고 그대로 따른다.
+- **트리거 (모든 에이전트 공통)**: "면접 난사" · "질문 난사" · "모의면접" · "털어줘" · "mock interview" · "grill me" · `/mock-interview`
+- **Claude Code**: `/mock-interview` 네이티브 스킬로 자동 호출된다.
+- **Codex · Cursor · Gemini 등 — 즉 이 `AGENTS.md`를 읽는 모든 에이전트**: 위 트리거가 오면 `.claude/skills/mock-interview/SKILL.md`를 읽고 그대로 따른다. **이 `AGENTS.md`가 곧 이들의 프로젝트 스코프 스킬 정의**이므로 에이전트별 별도 파일은 필요 없다.
 
 ---
 
