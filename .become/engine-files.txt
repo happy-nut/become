@@ -1,9 +1,0 @@
-# Paths owned by the become learning engine.
-# PROFILE.md and box*/ are intentionally excluded: they belong to each learner.
-AGENTS.md
-CLAUDE.md
-GEMINI.md
-.claude/skills
-.become/engine-files.txt
-scripts/sync-become.sh
-.github/workflows/sync-become.yml
