@@ -1,3 +1,8 @@
 .env
 .DS_Store
 node_modules/
+.become/
+.unlazy/
+/GATES.md
+__pycache__/
+*.pyc

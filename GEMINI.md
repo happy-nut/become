@@ -1,5 +1,4 @@
-# 학습 코치 — Gemini CLI 진입점
+# become 다중 에이전트 개인 대학 — Gemini CLI 진입점
 
-이 레포의 학습 코치 지침 정본은 **`AGENTS.md`** 에 있다.
-세션을 시작하기 전에 이 저장소의 `AGENTS.md`를 읽고, 거기에 적힌 지침을 그대로 따르라.
-`AGENTS.md`가 곧 이 학습 시스템의 전체 규칙이다.
+Orchestrator 계약은 **`AGENTS.md`**, 전문 에이전트 계약은 `agents/*.md`에 있다.
+세션을 시작하기 전에 `AGENTS.md`를 읽고, dispatch할 때 대상 전문 에이전트 파일을 독립 컨텍스트로 사용하라.
