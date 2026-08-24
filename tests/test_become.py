@@ -557,6 +557,31 @@ class StateV4MigrationTests(EngineTestCase):
 
 
 class AdvisorCurriculumTests(EngineTestCase):
+    def test_advisor_decides_five_curriculum_dimensions_without_learner_interview(self):
+        self.init_profile()
+        result = None
+        for decision in ("destination", "baseline", "sequencing", "cut_list", "milestones"):
+            result = self.engine.advisor_decide(
+                decision,
+                f"{decision} choice",
+                f"{decision} rationale",
+                [f"{decision} evidence"],
+                AT,
+            )
+        self.assertEqual(result["status"], "ready")
+        curriculum = self.engine.advisor_curriculum(
+            json.loads(json.dumps(CURRICULUM)), AT
+        )
+        self.assertEqual(curriculum["status"], "ready")
+        decisions = [
+            entry
+            for entries in self.store.load()["profile"]["curriculum_interview"].values()
+            for entry in entries
+        ]
+        self.assertEqual(len(decisions), 5)
+        self.assertTrue(all(entry["decided_by"] == "advisor" for entry in decisions))
+        self.assertTrue(all(entry["rationale"] and entry["evidence"] for entry in decisions))
+
     def test_profile_and_next_action_follow_current_state(self):
         profile = self.init_profile()
         self.assertEqual(profile["goal"], "분산 시스템 전문가")
@@ -2789,7 +2814,7 @@ class RoleContractTests(unittest.TestCase):
             "orchestrator workflow-next",
             "advisor init",
             "advisor observe",
-            "advisor interview",
+            "advisor decide",
             "advisor curriculum",
             "advisor milestone",
             "advisor next",

@@ -81,16 +81,18 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 
 ### Advisor
 
-- 다섯 결정을 각각 한 번에 질문 하나, 결정당 최대 다섯 질문으로 인터뷰한다.
-- 다섯 결정의 질문과 수행 근거를 서로 다르게 기록한다. 같은 문답을 decision label만 바꿔 재사용하지 않는다.
-- 도착점은 관찰 가능한 수행, baseline은 실제 증거, 순서는 앞선 선수 관계, 제외 항목은 이유와 재검토
-  조건, 각 step의 milestone은 Editor가 통과시킨 학습자 artifact로 정의한다.
+- 사용자가 한 문장으로 밝힌 지향점을 되묻지 않고 destination·baseline·sequencing·cut list·milestones를
+  직접 결정한다. 각 결정의 choice·rationale·evidence를 서로 다르게 기록한다.
+- 수행 증거가 없으면 현재 능력을 만들어내지 않고 baseline을 관찰 전 초기 가설로 정한다. 첫 Tutor 설명 뒤
+  적용 수행을 진단 근거로 받아 경로를 갱신하며, 계획 수립을 위해 사용자에게 자기평가나 목표 세부사항을 묻지 않는다.
+- 도착점은 관찰 가능한 수행, baseline은 실제 증거나 명시된 관찰 전 초기 가설, 순서는 앞선 선수 관계,
+  제외 항목은 이유와 재검토 조건, 각 step의 milestone은 Editor가 통과시킨 학습자 artifact로 정의한다.
 - 현재 active step의 모든 milestone 증거가 있어야 다음 prerequisite-ready step이 열린다. 이전
   curriculum version의 artifact는 재사용하지 않는다.
 - 동일 spec 재제출은 version/history를 늘리지 않는다. 실제 수정 때도 증명 조건이 같은 완료 milestone은
   보존하고, cut list와 required step의 충돌은 거부한다.
 - 목표·핵심 focus가 바뀌면 이전 profile·curriculum은 history로 보존하되 현재 경로와 자동 복습에서는
-  비활성화하고 다섯 결정을 새로 세운다.
+  비활성화하고 다섯 결정을 Advisor가 새로 세운다.
 - Tutor의 독립 수행·혼동·전이 결과로 수준과 경로를 갱신한다. `advisor observe`는 그 결과를 만든 완료
   Tutor handoff에 묶이며 같은 observation을 두 Advisor 갱신에 재사용하지 않는다.
 - 예상 기억률이 목표 아래로 내려간 과거 혼동은 remedial 목표로 다시 활성화한다.
@@ -110,6 +112,7 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 ### Tutor
 
 - 새 학습과 만기 전 약점은 질문으로 시험하지 않고 `tutor teach`로 먼저 알려준다.
+- 새 학습의 중심은 온전한 설명 한 번이다. 질문은 설명을 대신하지 않으며, 설명 뒤 별개 사례 적용 하나로 제한한다.
 - 혼동을 정의·인과·조건·경계·순서·트레이드오프로 나눠 처음 어긋난 지점을 저장한다.
 - 모든 설명은 `왜 쓰는가 → 왜 이렇게 되었는가 → 왜 이 결과가 나오는가 → 그래서 어디에 쓰는가`를
   빠짐없이 다룬다. 연결 기준은 현재 전공의 active related knowledge 하나 또는 Advisor가 확정한
@@ -171,7 +174,7 @@ handoff를 하나만 가질 수 있고, `python3 become.py --scope-handoff HANDO
 ```bash
 python3 become.py --actor advisor advisor init --goal "되고 싶은 모습" --level "현재 수행" --focus "우선 영역"
 python3 become.py --actor advisor advisor observe --level "관찰 수준" --evidence "Tutor 수행 근거" --source-handoff TUTOR_HANDOFF_ID
-python3 become.py --actor advisor advisor interview --decision destination --question "질문" --answer "답"
+python3 become.py --actor advisor advisor decide --decision destination --choice "관찰 가능한 도착점" --rationale "선택 이유" --evidence "사용자 지향점 또는 저장된 수행 증거"
 python3 become.py --actor advisor advisor curriculum --spec '{...}'
 python3 become.py --actor advisor advisor milestone MILESTONE_ID --artifact-id ARTIFACT_ID
 python3 become.py --actor advisor advisor recommend

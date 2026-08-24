@@ -12,7 +12,10 @@ from pathlib import Path
 from unittest import mock
 
 from become import EDITOR_DIMENSIONS, Engine, Store
-from mobile import CodexRunner, MobileServer, bind_is_loopback, state_revision
+from mobile import (
+    CodexRunner, JobStore, MobileServer, bind_is_loopback, state_revision,
+    validate_candidate_preserves_base,
+)
 
 
 AT = datetime(2026, 8, 24, 13, 5, tzinfo=timezone.utc)
@@ -75,6 +78,27 @@ class ReviewRunner:
         return {
             "outcome": "completed", "response": "복습 완료", "input_request": None,
             "roles_advanced": [], "workflow_id": None,
+        }
+
+
+class ConversationRunner:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, workspace, message, reply_context, emit, cancelled):
+        self.calls.append({"message": message, "reply_context": reply_context})
+        if reply_context is None:
+            return {
+                "outcome": "needs_input", "response": "설명 뒤 적용을 확인합니다.",
+                "input_request": {
+                    "kind": "tutor_application", "prompt": "새 사례에 어떻게 적용할까요?",
+                    "workflow_id": None, "handoff_id": None, "resource_id": None,
+                },
+                "roles_advanced": [], "workflow_id": None,
+            }
+        return {
+            "outcome": "completed", "response": "답을 반영해 다음 학습을 준비했습니다.",
+            "input_request": None, "roles_advanced": [], "workflow_id": None,
         }
 
 
@@ -195,7 +219,7 @@ class MobileCampusApiTests(MobileTestCase):
         self.assertEqual(today["status"], "ready")
         self.assertEqual(today["current"]["phase"], "retrieval")
         self.assertNotIn("explanation", today["current"])
-        self.assertIn("primary_action", today)
+        self.assertNotIn("primary_action", today)
         self.assertIn("progress", today)
         self.assertLess(len(json.dumps(today, ensure_ascii=False).encode()), 4096)
 
@@ -305,8 +329,7 @@ class MobileCampusContractTests(MobileTestCase):
         self.assertIn("min-height: 44px", styles)
         self.assertIn("prefers-color-scheme: dark", styles)
         self.assertIn("prefers-reduced-motion: reduce", styles)
-        self.assertIn(':root[data-theme="dark"]', styles)
-        self.assertIn(':root[data-motion="reduced"]', styles)
+        self.assertIn(".teaching-flow", styles)
         self.assertIn("safe-area-inset-bottom", styles)
         self.assertIn(":focus-visible", styles)
         _, _, script = self.get("/app.js")
@@ -315,8 +338,107 @@ class MobileCampusContractTests(MobileTestCase):
         self.assertIn("/api/reviews/sync", app)
         self.assertIn("request_id", app)
         self.assertIn("visualViewport", app)
-        self.assertIn("applyPreferences", app)
+        self.assertIn('summary.textContent = "직접 적용해 보기"', app)
+        self.assertNotIn("minutes", app)
+        self.assertNotIn('name="minutes"', html)
         self.assertNotIn("/api/explanation?id=", app)
+
+
+class MobileJourneyContractTests(MobileTestCase):
+    def test_goal_submission_delegates_decisions_without_advisor_questions(self):
+        _, _, script = self.get("/app.js")
+        app = script.decode()
+        create = app[app.index("async function createJob"):app.index("async function cancelJob")]
+        self.assertIn('{view: "today"}', app)
+        self.assertIn('renderTodayJob(body.job, record)', create)
+        self.assertIn('const view = options.view || state.view', create)
+        self.assertNotIn('navigate("campus")', create)
+        self.assertIn('resumeTodayJob()', app)
+        self.assertIn("목표를 되묻지 말고 Advisor가 실용 목표와 첫 학습 경로를 정한 뒤", app)
+        self.assertNotIn('advisor_answer:', app)
+        self.assertNotIn("입학 대화", app)
+        self.assertIn('localStorage.getItem(goalDraft)', app)
+
+    def test_questions_progress_and_recovery_controls_render_in_the_origin_view(self):
+        _, _, script = self.get("/app.js")
+        app = script.decode()
+        self.assertIn('reply_to: replyTo', app)
+        self.assertIn('cacheKey(`job-reply:${job.id}`)', app)
+        self.assertIn('답하고 계속하기', app)
+        self.assertIn('이 화면을 닫아도 진행 상태는 보존됩니다.', app)
+        self.assertIn('다시 시도', app)
+        self.assertIn('입력으로 돌아가기', app)
+        self.assertIn('buildJob(job, "today", record)', app)
+        self.assertIn('buildJob(job, "campus")', app)
+        for role in ("Advisor", "Librarian", "Tutor", "Editor", "Roommate"):
+            self.assertIn(role, app)
+
+
+class MobileJourneyApiTests(MobileTestCase):
+    def wait_for(self, job_id, expected, timeout=4):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            _, body = self.json_get(f"/api/jobs/{job_id}")
+            if body["job"]["state"] == expected:
+                return body["job"]
+            time.sleep(0.03)
+        self.fail(f"job {job_id} did not reach {expected}")
+
+    def test_reply_continues_the_exact_question_once(self):
+        runner = ConversationRunner()
+        self.server.runner = runner
+        _, board = self.json_get("/api/dashboard")
+        _, started = self.post("/api/jobs", {
+            "message": "개인 대학 입학을 시작한다", "expected_revision": board["state_revision"],
+        })
+        first = self.wait_for(started["job"]["id"], "completed")
+        self.assertEqual(first["result"]["input_request"]["kind"], "tutor_application")
+        first_summary = self.json_get(f"/api/jobs/{first['id']}?summary=1")[1]["job"]
+        self.assertFalse(first_summary["reply_consumed"])
+
+        _, continued = self.post("/api/jobs", {
+            "message": "운영 제약 아래 설계를 방어하고 싶다",
+            "expected_revision": first["result"]["result_revision"], "reply_to": first["id"],
+        })
+        second = self.wait_for(continued["job"]["id"], "completed")
+        self.assertEqual(second["result"]["response"], "답을 반영해 다음 학습을 준비했습니다.")
+        self.assertEqual(runner.calls[1]["reply_context"], first["result"]["input_request"])
+        first_summary = self.json_get(f"/api/jobs/{first['id']}?summary=1")[1]["job"]
+        self.assertTrue(first_summary["reply_consumed"])
+
+        with self.assertRaises(urllib.error.HTTPError) as duplicate:
+            self.post("/api/jobs", {
+                "message": "중복 답변", "expected_revision": second["result"]["result_revision"],
+                "reply_to": first["id"],
+            })
+        self.assertEqual(duplicate.exception.code, 409)
+        duplicate.exception.close()
+
+    def test_legacy_advisor_question_is_retired(self):
+        job = self.server.jobs.create("이전 입학 요청", "sha256:base", None)
+        self.server.jobs.finish(job["id"], "completed", result={
+            "response": "이전 질문", "result_revision": "sha256:base",
+            "input_request": {
+                "kind": "advisor_answer", "prompt": "목표를 더 설명해 주세요."
+            },
+        })
+        _, body = self.json_get(f"/api/jobs/{job['id']}?summary=1")
+        self.assertIsNone(body["job"]["input_request"])
+        self.assertEqual(
+            body["job"]["response"],
+            "이전 목표 질문은 폐기되었습니다. Advisor가 목표와 경로를 직접 결정합니다.",
+        )
+
+    def test_failed_reply_can_be_retried_without_consuming_the_question(self):
+        with tempfile.TemporaryDirectory() as name:
+            jobs = JobStore(Path(name), lambda: AT)
+            parent = jobs.create("질문", "sha256:base", None)
+            jobs.finish(parent["id"], "completed", result={"input_request": {"prompt": "답?"}})
+            failed = jobs.create("첫 답", "sha256:base", parent["id"])
+            jobs.finish(failed["id"], "failed", error={"code": "agent_failed", "message": "실패"})
+            self.assertFalse(jobs.reply_consumed(parent["id"]))
+            retry = jobs.create("다시 쓴 답", "sha256:base", parent["id"])
+            self.assertEqual(retry["reply_to"], parent["id"])
 
 
 class MobileAgentApiTests(MobileTestCase):
@@ -328,6 +450,21 @@ class MobileAgentApiTests(MobileTestCase):
                 return body["job"]
             time.sleep(0.03)
         self.fail(f"job {job_id} did not reach {state}")
+
+    def test_target_change_archives_advisor_decisions_without_data_loss(self):
+        engine = Engine(Store(self.home))
+        base = engine.store.load()
+        engine.advisor_interview(
+            "destination", "이전 목표에서 무엇을 할 수 있어야 하나요?", "이전 수행", AT
+        )
+        base = engine.store.load()
+        engine.advisor_init("새 목표", "관찰 전", ["새 focus"], 0.9, AT)
+        candidate = engine.store.load()
+        validate_candidate_preserves_base(base, candidate)
+        archived = candidate["profile"]["profile_history"][-1]
+        self.assertEqual(
+            archived["curriculum_interview"]["destination"][0]["answer"], "이전 수행"
+        )
 
     def test_async_job_returns_immediately_persists_progress_and_recovers_by_id(self):
         runner = BlockingRunner()

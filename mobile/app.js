@@ -22,14 +22,6 @@ function readJson(key, fallback = null) {
   try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
 }
 function writeJson(key, value) { localStorage.setItem(key, JSON.stringify(value)); }
-function applyPreferences() {
-  const theme = localStorage.getItem(cacheKey("theme")) || "system";
-  const motion = localStorage.getItem(cacheKey("motion")) || "system";
-  if (theme === "system") delete document.documentElement.dataset.theme;
-  else document.documentElement.dataset.theme = theme;
-  if (motion === "system") delete document.documentElement.dataset.motion;
-  else document.documentElement.dataset.motion = motion;
-}
 function token() { return sessionStorage.getItem("become-token") || ""; }
 function requestId() { return crypto.randomUUID().replaceAll("-", ""); }
 function formatDate(value, withTime = true) {
@@ -122,6 +114,34 @@ function enqueue(submission) {
   saveOutbox(items.slice(-20));
 }
 function queuedRequest(request) { return outbox().find(item => item.request_id === request); }
+function activeJob() {
+  const raw = localStorage.getItem(cacheKey("active-job"));
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw);
+    return value && typeof value === "object" ? value : null;
+  } catch {
+    return {id: raw, view: "campus", message: "", replyTo: null};
+  }
+}
+function saveActiveJob(value) { writeJson(cacheKey("active-job"), value); }
+function clearActiveJob(id) {
+  if (activeJob()?.id === id) localStorage.removeItem(cacheKey("active-job"));
+}
+function normalizeJob(job) {
+  const result = job.result || {};
+  return {
+    ...job,
+    status: job.status || ({
+      queued: "학습 준비를 시작했습니다.", running: "학습 경로를 준비하고 있습니다.",
+      completed: "다음 단계가 준비되었습니다.", failed: "진행을 이어가지 못했습니다.",
+      interrupted: "진행을 중단했습니다.",
+    })[job.state],
+    response: job.response || result.response || job.error?.message,
+    input_request: job.input_request || result.input_request,
+    result_revision: job.result_revision || result.result_revision,
+  };
+}
 
 function list(items, className = "") {
   const node = document.createElement("ul");
@@ -144,30 +164,13 @@ function renderToday(data, cached = false) {
   state.dashboard = data;
   state.revision = data.state_revision || state.revision;
   $("#today-goal").textContent = data.goal || data.message || "나의 대학을 시작합니다.";
-  const summary = $("#today-summary");
-  summary.replaceChildren();
-  const meta = paragraph(
-    data.current_step
-      ? `${data.current_step.order}/${data.current_step.total}단계 · ${data.current_step.title}`
-      : data.status === "setup" ? "첫 5분 · 목표 세우기" : "다음 수업 준비",
-    "meta",
-  );
-  const title = document.createElement("h2");
-  title.textContent = data.primary_action?.label || "다음 학습 이어가기";
-  const detail = paragraph(
-    data.previous_confusion
-      ? `지난 혼동: ${data.previous_confusion}`
-      : data.recent_achievement || "알고 있는 것에서 다음 개념으로 이어갑니다.",
-  );
-  const action = document.createElement("button");
-  action.type = "button";
-  action.textContent = `${$("input[name=minutes]:checked").value}분 시작`;
-  action.addEventListener("click", () => {
-    const target = $(data.status === "setup" ? "#setup-goal" : "#lesson-title") || $("#today-content button, #today-content textarea");
-    target?.focus({preventScroll: true});
-    target?.scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start"});
-  });
-  summary.append(meta, title, detail, action);
+  const context = $("#today-context");
+  context.replaceChildren();
+  if (data.current_step) {
+    context.append(paragraph(`${data.current_step.order}/${data.current_step.total}단계 · ${data.current_step.title}`, "meta"));
+  }
+  if (data.previous_confusion) context.append(paragraph(`지난번에 헷갈린 것: ${data.previous_confusion}`));
+  else if (data.recent_achievement) context.append(paragraph(data.recent_achievement));
   if (data.progress?.total) {
     const track = document.createElement("div");
     track.className = "progress-track";
@@ -178,8 +181,9 @@ function renderToday(data, cached = false) {
     const fill = document.createElement("span");
     fill.style.width = `${Math.round(data.progress.completed / data.progress.total * 100)}%`;
     track.append(fill);
-    summary.append(track);
+    context.append(track);
   }
+  context.hidden = !context.childElementCount;
 
   const content = $("#today-content");
   content.replaceChildren();
@@ -192,19 +196,29 @@ function renderSetup(container) {
   const section = document.createElement("section");
   section.className = "lesson";
   section.innerHTML = `
-    <p class="phase">입학 대화</p>
+    <p class="phase">나의 방향</p>
     <h2 id="lesson-title">어떤 전문가가 되고 싶으세요?</h2>
-    <p>시험, 언어, 업무, 학문 모두 좋습니다. 답을 보내면 수준과 실용 목표를 확인하는 짧은 대화를 시작합니다.</p>
+    <p>한 문장이면 충분합니다. Advisor가 실용 목표와 첫 학습 경로를 정하고, 실제 학습 수행을 보며 조정합니다.</p>
     <form id="setup-form">
       <div class="field"><label for="setup-goal">되고 싶은 모습을 한 문장으로</label><textarea id="setup-goal" required maxlength="1000" placeholder="예: 운영 근거로 분산 시스템 설계를 방어하는 엔지니어"></textarea></div>
       <button class="primary" type="submit">나의 대학 시작하기</button>
     </form>`;
   container.append(section);
+  const goalInput = $("#setup-goal", section);
+  const goalDraft = cacheKey("setup-goal");
+  goalInput.value = localStorage.getItem(goalDraft) || "";
+  goalInput.addEventListener("input", () => localStorage.setItem(goalDraft, goalInput.value));
   $("#setup-form", section).addEventListener("submit", async event => {
     event.preventDefault();
-    const goal = $("#setup-goal", section).value.trim();
+    const goal = goalInput.value.trim();
     if (!goal) return;
-    await createJob(`나는 ${goal}이(가) 되고 싶어. 현재 수준과 실제 목표를 파악하는 입학 대화를 시작해줘.`);
+    const button = $("button", section);
+    button.disabled = true;
+    const created = await createJob(
+      `나는 ${goal}이(가) 되고 싶어. 목표를 되묻지 말고 Advisor가 실용 목표와 첫 학습 경로를 정한 뒤 학습을 시작해줘.`,
+      {view: "today"},
+    );
+    if (!created) button.disabled = false;
   });
 }
 
@@ -219,7 +233,10 @@ function renderTodayEmpty(container) {
   button.type = "button";
   button.className = "secondary";
   button.textContent = "다음 학습 준비하기";
-  button.addEventListener("click", () => navigate("campus"));
+  button.addEventListener("click", () => createJob(
+    "현재 목표와 학습 증거를 바탕으로 다음에 배울 내용을 준비해줘.",
+    {view: "today"},
+  ));
   section.append(title, copy, button);
   container.append(section);
 }
@@ -230,34 +247,39 @@ function renderLesson(container, item, cached) {
   lesson.setAttribute("aria-labelledby", "lesson-title");
   const head = document.createElement("div");
   head.className = "lesson-head";
-  head.append(
-    paragraph(item.phase === "retrieval" ? "지연 인출" : "새 학습 · 설명 먼저", "phase"),
-    paragraph(cached ? "오프라인 사본" : item.phase === "retrieval" ? `만기 ${formatDate(item.due_at)}` : "먼저 이해하기", "meta"),
-  );
+  head.append(paragraph(item.phase === "retrieval" ? "지연 인출" : "새 학습 · 설명 먼저", "phase"));
+  if (cached || item.phase === "retrieval") {
+    head.append(paragraph(cached ? "오프라인 사본" : `만기 ${formatDate(item.due_at)}`, "meta"));
+  }
   const title = document.createElement("h2");
   title.id = "lesson-title";
   title.tabIndex = -1;
   title.textContent = item.title;
   lesson.append(head, title);
+  let practice = lesson;
   if (item.phase === "exposure") {
-    lesson.append(paragraph(item.explanation));
-    const chain = document.createElement("dl");
-    chain.className = "why-chain";
+    const teaching = document.createElement("section");
+    teaching.className = "teaching-flow";
+    teaching.append(paragraph(item.explanation, "lesson-intro"));
     for (const label of ["왜 쓰는가", "왜 이렇게 되었는가", "왜 이 결과가 나오는가", "그래서 어디에 쓰는가"]) {
       if (!item.why_chain?.[label]) continue;
-      const row = document.createElement("div");
-      const term = document.createElement("dt");
-      term.textContent = label;
-      const detail = document.createElement("dd");
-      detail.textContent = item.why_chain[label];
-      row.append(term, detail);
-      chain.append(row);
+      const section = document.createElement("section");
+      const heading = document.createElement("h3");
+      heading.textContent = label;
+      section.append(heading, paragraph(item.why_chain[label]));
+      teaching.append(section);
     }
-    lesson.append(chain, paragraph(`이미 아는 것과 연결: ${item.connection}`, "connection-note"), paragraph(item.example, "example"));
+    lesson.append(teaching, paragraph(`이미 아는 것과 연결하면: ${item.connection}`, "connection-note"));
+    practice = document.createElement("details");
+    practice.className = "practice";
+    const summary = document.createElement("summary");
+    summary.textContent = "직접 적용해 보기";
+    practice.append(summary);
+    lesson.append(practice);
   }
   const promptTitle = document.createElement("h3");
-  promptTitle.textContent = item.phase === "retrieval" ? "자료 없이 꺼내 보세요" : "이제 다른 상황에 적용해 보세요";
-  lesson.append(promptTitle, paragraph(item.prompt));
+  promptTitle.textContent = item.phase === "retrieval" ? "자료 없이 꺼내 보세요" : "다른 상황이라면";
+  practice.append(promptTitle, paragraph(item.prompt));
   const attempt = attemptFor(item);
   const form = document.createElement("form");
   form.id = "review-form";
@@ -280,7 +302,7 @@ function renderLesson(container, item, cached) {
     if (!attempt.answer || !attempt.rating) return toast("답과 현재 확신을 함께 남겨 주세요.");
     submitReview(attempt);
   });
-  lesson.append(form);
+  practice.append(form);
   if (item.phase === "retrieval") {
     const giveUp = document.createElement("button");
     giveUp.type = "button";
@@ -292,7 +314,7 @@ function renderLesson(container, item, cached) {
       writeJson(attempt.key, attempt);
       submitReview(attempt);
     });
-    lesson.append(giveUp);
+    practice.append(giveUp);
   }
   if (queuedRequest(attempt.request_id)) {
     $("#queue-status", form).textContent = "오프라인 제출 대기 중 · 연결되면 한 번만 동기화합니다.";
@@ -408,10 +430,15 @@ async function loadToday(useCache = true) {
   setBusy(true);
   clearError();
   try {
-    const data = await api("/api/dashboard");
+    let data = await api("/api/dashboard");
     writeJson(cacheKey("today"), data);
     setConnection(true);
     renderToday(data, false);
+    if (await resumeTodayJob() === "finished") {
+      data = await api("/api/dashboard");
+      writeJson(cacheKey("today"), data);
+      renderToday(data, false);
+    }
     await syncOutbox();
   } catch (error) {
     const cached = useCache && readJson(cacheKey("today"));
@@ -436,7 +463,7 @@ function renderCurriculum(data) {
     const button = document.createElement("button");
     button.className = "secondary";
     button.textContent = "경로 세우기";
-    button.addEventListener("click", () => navigate("campus"));
+    button.addEventListener("click", () => navigate("today"));
     empty.append(title, paragraph("목표, 현재 수행, 순서, 제외 범위, 증명 방법을 대화로 정합니다."), button);
     return root.append(empty);
   }
@@ -533,6 +560,109 @@ async function loadHistory(more = false) {
   } finally { setBusy(false); restoreScroll("history"); }
 }
 
+function buildJob(jobValue, view, record = activeJob()) {
+  const job = normalizeJob(jobValue);
+  const article = document.createElement("article");
+  article.className = "job";
+  article.dataset.state = job.state;
+  article.setAttribute("aria-live", "polite");
+  const heading = document.createElement(view === "today" ? "h2" : "h3");
+  heading.textContent = job.input_request ? ({
+    librarian_sources: "Librarian · 자료 확인",
+    tutor_application: "Tutor · 적용", tutor_retrieval: "Tutor · 지연 인출",
+    artifact_submission: "Editor · 결과물", artifact_revision: "Editor · 수정",
+    roommate_answer: "Roommate · 다른 관점",
+  })[job.input_request.kind] || "다음 한 가지" : job.status;
+  article.append(heading);
+  if (job.response) article.append(paragraph(job.response));
+
+  if (job.input_request && !job.reply_consumed) {
+    const prompt = document.createElement("section");
+    prompt.className = "job-question";
+    prompt.append(paragraph(job.input_request.prompt, "job-prompt"));
+    const form = document.createElement("form");
+    const draftKey = cacheKey(`job-reply:${job.id}`);
+    form.innerHTML = `
+      <div class="field"><label for="reply-${job.id}">내 답</label><textarea id="reply-${job.id}" required maxlength="4000"></textarea><p class="field-help">답하면 같은 학습 활동이 이어집니다.</p></div>
+      <button class="primary" type="submit">답하고 계속하기</button>`;
+    const answer = $("textarea", form);
+    answer.value = localStorage.getItem(draftKey) || "";
+    answer.addEventListener("input", () => localStorage.setItem(draftKey, answer.value));
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const value = answer.value.trim();
+      if (!value) return;
+      const button = $("button", form);
+      button.disabled = true;
+      const created = await createJob(value, {view, replyTo: job.id});
+      if (created) localStorage.removeItem(draftKey);
+      else button.disabled = false;
+    });
+    prompt.append(form);
+    article.append(prompt);
+  }
+
+  if (["queued", "running"].includes(job.state)) {
+    article.append(paragraph("이 화면을 닫아도 진행 상태는 보존됩니다.", "meta"));
+    const cancel = document.createElement("button");
+    cancel.className = "secondary";
+    cancel.textContent = "중단";
+    cancel.addEventListener("click", () => cancelJob(job.id));
+    article.append(cancel);
+  } else if (["failed", "interrupted"].includes(job.state) && record?.id === job.id) {
+    const actions = document.createElement("div");
+    actions.className = "button-row";
+    if (record.message) {
+      const retry = document.createElement("button");
+      retry.textContent = "다시 시도";
+      retry.addEventListener("click", () => createJob(record.message, {
+        view: record.view || view, replyTo: record.replyTo || null,
+      }));
+      actions.append(retry);
+    }
+    const reset = document.createElement("button");
+    reset.className = "secondary";
+    reset.textContent = "입력으로 돌아가기";
+    reset.addEventListener("click", async () => {
+      clearActiveJob(job.id);
+      if (view === "today") await loadToday(false);
+      else await loadCampus(false);
+    });
+    actions.append(reset);
+    article.append(actions);
+  }
+  return article;
+}
+
+function renderTodayJob(job, record = activeJob()) {
+  const content = $("#today-content");
+  content.replaceChildren(buildJob(job, "today", record));
+}
+
+async function resumeTodayJob() {
+  let record = activeJob();
+  if (!record || (record.view !== "today" && record.message)) return "none";
+  try {
+    const {job: value} = await api(`/api/jobs/${encodeURIComponent(record.id)}?summary=1`);
+    const job = normalizeJob(value);
+    if (job.state === "completed" && !job.input_request) {
+      clearActiveJob(job.id);
+      localStorage.removeItem(cacheKey("setup-goal"));
+      return "finished";
+    }
+    if (record.view !== "today") {
+      return "none";
+    }
+    state.revision = job.result_revision || state.revision;
+    renderTodayJob(job, record);
+    scheduleJobPoll();
+    return "shown";
+  } catch (error) {
+    if (error.status === 404) clearActiveJob(record.id);
+    return "none";
+  }
+}
+
 function renderCampus(data) {
   state.campus = data;
   const root = $("#campus-content");
@@ -545,20 +675,6 @@ function renderCampus(data) {
   if (data.level) profile.append(paragraph(`현재 수행: ${data.level}`));
   if (data.focus?.length) profile.append(list(data.focus));
   root.append(profile);
-
-  const preferences = document.createElement("section");
-  preferences.className = "workshop";
-  preferences.innerHTML = `
-    <h2>읽기 환경</h2>
-    <div class="field"><label for="theme-choice">화면 색상</label><select id="theme-choice"><option value="system">기기 설정</option><option value="light">밝게</option><option value="dark">어둡게</option></select></div>
-    <div class="field"><label for="motion-choice">화면 움직임</label><select id="motion-choice"><option value="system">기기 설정</option><option value="reduced">움직임 줄이기</option></select></div>`;
-  const themeChoice = $("#theme-choice", preferences);
-  const motionChoice = $("#motion-choice", preferences);
-  themeChoice.value = localStorage.getItem(cacheKey("theme")) || "system";
-  motionChoice.value = localStorage.getItem(cacheKey("motion")) || "system";
-  themeChoice.addEventListener("change", () => { localStorage.setItem(cacheKey("theme"), themeChoice.value); applyPreferences(); });
-  motionChoice.addEventListener("change", () => { localStorage.setItem(cacheKey("motion"), motionChoice.value); applyPreferences(); });
-  root.append(preferences);
 
   const support = document.createElement("section");
   support.className = "workshop";
@@ -573,8 +689,7 @@ function renderCampus(data) {
     event.preventDefault();
     const message = $("#support-message", support).value.trim();
     if (!message) return;
-    await createJob(message);
-    localStorage.removeItem(supportDraft);
+    if (await createJob(message)) localStorage.removeItem(supportDraft);
   });
   root.append(support);
 
@@ -584,24 +699,7 @@ function renderCampus(data) {
     const h2 = document.createElement("h2");
     h2.textContent = "이어지는 학습 지원";
     jobs.append(h2);
-    for (const job of data.jobs) {
-      const article = document.createElement("article");
-      article.className = "job";
-      article.dataset.state = job.state;
-      const h3 = document.createElement("h3");
-      h3.textContent = job.status;
-      article.append(h3);
-      if (job.response) article.append(paragraph(job.response));
-      if (job.input_request) article.append(paragraph(job.input_request.prompt, "connection-note"));
-      if (["queued", "running"].includes(job.state)) {
-        const cancel = document.createElement("button");
-        cancel.className = "secondary";
-        cancel.textContent = "중단";
-        cancel.addEventListener("click", () => cancelJob(job.id));
-        article.append(cancel);
-      }
-      jobs.append(article);
-    }
+    for (const job of data.jobs) jobs.append(buildJob(job, "campus"));
     root.append(jobs);
   }
 
@@ -749,43 +847,68 @@ async function reviseArtifact(item, content, button) {
   finally { button.disabled = false; }
 }
 
-async function createJob(message) {
+async function createJob(message, options = {}) {
+  const view = options.view || state.view;
+  const replyTo = options.replyTo || null;
   if (!navigator.onLine) return toast("학습 지원 요청은 연결된 뒤 보낼 수 있습니다. 작성 내용은 이 기기에 남아 있습니다.");
   if (!state.revision) return toast("최신 학습 상태를 먼저 불러와 주세요.");
   try {
     const body = await api("/api/jobs", {
       method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({message, expected_revision: state.revision}),
+      body: JSON.stringify({message, expected_revision: state.revision, reply_to: replyTo}),
     });
-    localStorage.setItem(cacheKey("active-job"), body.job.id);
-    toast("요청을 보냈습니다. 페이지를 닫아도 이어집니다.");
-    navigate("campus");
-    await loadCampus(false);
-  } catch (error) { showError(error.message, () => createJob(message)); }
+    const record = {id: body.job.id, view, message, replyTo};
+    saveActiveJob(record);
+    if (view === "today") {
+      renderTodayJob(body.job, record);
+      scheduleJobPoll();
+    } else {
+      await loadCampus(false);
+    }
+    return body;
+  } catch (error) {
+    showError(error.message, () => createJob(message, options));
+    return null;
+  }
 }
 
 async function cancelJob(id) {
   try {
     await api(`/api/jobs/${encodeURIComponent(id)}/cancel`, {method: "POST", headers: {"Content-Type": "application/json"}, body: "{}"});
-    await loadCampus(false);
+    if (activeJob()?.view === "today") await resumeTodayJob();
+    else await loadCampus(false);
   } catch (error) { showError(error.message, () => cancelJob(id)); }
 }
 
 function scheduleJobPoll() {
   clearTimeout(state.pollTimer);
-  const active = state.campus?.jobs?.filter(job => ["queued", "running"].includes(job.state)) || [];
-  if (state.view !== "campus" || !active.length) return;
+  const fallback = state.view === "campus"
+    ? state.campus?.jobs?.find(job => ["queued", "running"].includes(job.state))
+    : null;
+  const stored = activeJob();
+  const record = stored?.view === state.view
+    ? stored
+    : fallback ? {id: fallback.id, view: "campus"} : null;
+  if (!record) return;
   state.pollTimer = setTimeout(async () => {
     try {
-      const updates = await Promise.all(active.map(job => api(`/api/jobs/${encodeURIComponent(job.id)}?summary=1`).then(body => body.job)));
-      const changedRevision = updates.find(job => job.result_revision && job.result_revision !== state.revision);
-      if (changedRevision) {
-        state.revision = changedRevision.result_revision;
-        await loadCampus(false);
+      const {job: value} = await api(`/api/jobs/${encodeURIComponent(record.id)}?summary=1`);
+      const job = normalizeJob(value);
+      const revisionChanged = Boolean(job.result_revision && job.result_revision !== state.revision);
+      state.revision = job.result_revision || state.revision;
+      if (record.view === "today") {
+        if (job.state === "completed" && !job.input_request) {
+          clearActiveJob(job.id);
+          localStorage.removeItem(cacheKey("setup-goal"));
+          await loadToday(false);
+        } else if (revisionChanged) {
+          await loadToday(false);
+        } else {
+          renderTodayJob(job, record);
+          if (["queued", "running"].includes(job.state)) scheduleJobPoll();
+        }
       } else if (!["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement?.tagName)) {
-        const byId = new Map(updates.map(job => [job.id, job]));
-        state.campus.jobs = state.campus.jobs.map(job => byId.get(job.id) || job);
-        renderCampus(state.campus);
+        await loadCampus(false);
       } else scheduleJobPoll();
     } catch { scheduleJobPoll(); }
   }, document.hidden ? 4000 : 1800);
@@ -842,14 +965,6 @@ $("#save-token").addEventListener("click", () => {
 });
 $("#retry-view").addEventListener("click", () => state.retry?.());
 $("#history-more").addEventListener("click", () => loadHistory(true));
-$("input[name=minutes][value='10']").checked = true;
-for (const input of $$('input[name="minutes"]')) {
-  input.checked = input.value === (localStorage.getItem(cacheKey("minutes")) || "10");
-  input.addEventListener("change", () => {
-    localStorage.setItem(cacheKey("minutes"), input.value);
-    if (state.dashboard) renderToday(state.dashboard, !navigator.onLine);
-  });
-}
 document.addEventListener("click", event => {
   const view = event.target.closest("[data-view]")?.dataset.view;
   const go = event.target.closest("[data-go]")?.dataset.go;
@@ -887,6 +1002,5 @@ async function registerWorker() {
   });
 }
 
-applyPreferences();
 registerWorker().catch(() => {});
 showView(state.view, false);
