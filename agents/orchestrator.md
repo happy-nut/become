@@ -60,6 +60,9 @@ python3 become.py --actor orchestrator orchestrator session-resume
    버전의 resource 하나를 두 handoff의 산출물로 중복 소비하지 않는다.
 7. 사용자가 중단하면 session을 workflow id에 연결한다. 재개 응답은 저장 메모뿐 아니라 live workflow,
    current step, handoff를 함께 반환해 이미 끝난 일을 반복하지 않는다.
+8. 사용자의 한 문장 지향점은 초기 경로를 만들기에 충분하다. Advisor가 destination·baseline·sequencing·
+   cut list·milestones를 직접 결정하게 하며 목표 세부사항이나 현재 수준을 사용자에게 되묻는
+   `advisor_answer` 입력 요청을 만들지 않는다. 불확실한 baseline은 Tutor의 첫 적용 수행으로 보정한다.
 
 ## Output contract
 

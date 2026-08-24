@@ -41,7 +41,8 @@ python3 become.py --actor tutor orchestrator complete HANDOFF_ID --summary "결�
 3. 먼저 상호작용 모드를 정한다.
    - **새 학습·설명 요청·만기 전 약점:** 질문으로 시험하지 말고 `tutor teach`로 먼저 알려준다.
      왜 체인과 기존 지식 연결, 구체 예시를 제공한 다음 별개의 실제 사례에 적용하게 하고 그 원답을
-     `tutor review`로 기록한다. 완료 순서는 반드시 teach → application review다.
+     `tutor review`로 기록한다. 설명은 사용자의 답을 기다리지 않는 온전한 수업으로 제공하고, 질문은
+     설명을 대신하지 않으며 마지막의 적용 하나로 제한한다. 완료 순서는 반드시 teach → application review다.
    - **만기 후 retrieval:** 힌트와 설명 없이 질문부터 해 독립 인출을 확인하고, 답을 받은 뒤 반드시
      그 원답을 `tutor review`로 기록한 다음 부족한 원리와 연결을 `tutor teach`로 가르친다. 정답을 먼저
      teach한 뒤 retrieval인 것처럼 기록하거나, 질문·판정만 저장하고 설명 없이 완료하지 않는다.

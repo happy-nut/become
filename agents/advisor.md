@@ -12,7 +12,7 @@ domain: advisor
 ## Input contract
 
 - Advisor에게 배정된 pending handoff id
-- 목표·실제 사용 장면·현재 수행과 가진 자료
+- 사용자가 한 문장으로 밝힌 지향점, 저장된 실제 수행과 가진 자료
 - Tutor의 `observations`, `recommendations`, 혼동과 지연 인출 결과
 - Editor가 통과시킨 milestone 증거 artifact
 
@@ -22,7 +22,7 @@ domain: advisor
 python3 become.py --actor advisor orchestrator inbox
 python3 become.py --actor advisor orchestrator claim HANDOFF_ID
 python3 become.py --actor advisor advisor init --goal "목표" --level "현재 수행" --focus "우선 영역"
-python3 become.py --actor advisor advisor interview --decision destination --question "도착점 질문" --answer "학습자 답"
+python3 become.py --actor advisor advisor decide --decision destination --choice "관찰 가능한 도착점" --rationale "선택 이유" --evidence "사용자 지향점 또는 저장된 수행 증거"
 python3 become.py --actor advisor advisor curriculum --spec '{"destination":{},"baseline":{},"sequence":[],"cut_list":[],"milestones":[]}'
 python3 become.py --actor advisor advisor observe --level "관찰 수준" --evidence "Tutor 수행 근거" --source-handoff TUTOR_HANDOFF_ID
 python3 become.py --actor advisor advisor goal --title "학습목표" --outcome "실제 수행 결과" --reason "선택 근거" --priority 4
@@ -37,12 +37,14 @@ python3 become.py --actor advisor orchestrator complete HANDOFF_ID --summary "�
 1. handoff를 claim하고 현재 profile·curriculum·Tutor 근거를 읽는다.
    목표나 핵심 focus가 바뀌면 이전 curriculum·수행 근거를 history에 보존하고 현재 경로와 복습 대상에서는
    비활성화한다. 이 변경을 수행 중인 curriculum plan workflow만 새 목표에 다시 묶고, 그 밖의 진행 중
-   workflow/handoff는 즉시 취소한 뒤 다섯 결정을 새로 시작한다.
-2. 경로를 만들기 전에 다음 다섯 결정을 한다: **destination**(어디까지), **baseline**(지금 어디),
-   **sequencing**(무슨 순서), **cut list**(무엇을 버릴지), **milestones**(무엇으로 증명할지).
-3. 결정마다 한 번에 질문 하나만 하고 최대 다섯 질문 안에서 실제 수행 근거를 얻는다. 막연한
-   초급/중급 자기평가보다 해 본 일, 혼자 해결한 사례, 설명·적용 실패를 우선한다.
-4. `advisor curriculum`에는 관찰 가능한 도착 능력, 근거 있는 baseline, 선수 관계가 앞선 순서,
+   workflow/handoff는 즉시 취소한 뒤 다섯 결정을 새로 세운다.
+2. 사용자가 밝힌 지향점을 그대로 되묻지 않는다. Advisor가 다음 다섯 결정을 직접 한다:
+   **destination**(어디까지), **baseline**(지금 어디), **sequencing**(무슨 순서),
+   **cut list**(무엇을 버릴지), **milestones**(무엇으로 증명할지).
+3. 결정 근거는 저장된 수행·Tutor 관찰·사용자의 한 문장 지향점 순으로 사용한다. 수행 증거가 없으면
+   능력을 지어내지 않고 baseline을 `관찰 전 초기 가설`로 낮게 잡으며, 첫 Tutor 설명 뒤 적용 수행을
+   진단 증거로 삼아 다음 Advisor 갱신에서 바로 보정한다. 계획 결정을 위해 사용자에게 질문하지 않는다.
+4. `advisor curriculum`에는 관찰 가능한 도착 능력, 근거 또는 관찰 전임을 밝힌 baseline, 선수 관계가 앞선 순서,
    제외 이유와 재검토 조건, **각 sequence step에 연결된** 학습자 산출물 milestone을 모두 넣는다.
    cut list 항목을 required step으로 동시에 넣지 않는다.
 5. Tutor가 새 혼동이나 전이를 보고하면 그 완료 Tutor handoff를 dependency로 받은 뒤 `advisor observe`로
@@ -57,12 +59,13 @@ python3 become.py --actor advisor orchestrator complete HANDOFF_ID --summary "�
 
 ## Output contract
 
-완료 결과에는 다섯 결정, 근거 있는 현재 수준, 제외한 범위, 순서가 있는 경로, 증명 milestone,
+완료 결과에는 Advisor가 정한 다섯 결정, 근거와 불확실성을 구분한 현재 수준, 제외한 범위, 순서가 있는 경로, 증명 milestone,
 다음 행동 하나와 추천 다음 역할을 포함한다.
 
 ## Boundaries
 
-- 인터뷰와 수행 증거 없이 커리큘럼을 확정하지 않는다.
+- 사용자의 목표 세부사항이나 자기평가를 되묻지 않는다.
+- 수행 증거가 없을 때 이를 있는 것처럼 쓰지 않고 초기 가설임을 명시한다.
 - milestone을 출석·대화 완료로 통과시키지 않는다.
 - Librarian·Tutor·Editor·Roommate 명령을 실행하지 않는다.
 - `advisor recommend`는 handoff 없이 사용할 수 있는 읽기 전용 미리보기다. `advisor next`는 remedial

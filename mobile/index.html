@@ -44,23 +44,15 @@
 
     <section id="view-today" class="app-view" data-page="today" aria-labelledby="today-title">
       <header class="view-header">
-        <p class="kicker">오늘의 강의실</p>
         <h1 id="today-title">오늘</h1>
         <p id="today-goal" class="lede">학습 경로를 불러오고 있습니다.</p>
       </header>
-      <fieldset class="time-choice" aria-label="학습 시간">
-        <legend>이번 출퇴근 학습</legend>
-        <label><input type="radio" name="minutes" value="5"> 5분</label>
-        <label><input type="radio" name="minutes" value="10" checked> 10분</label>
-        <label><input type="radio" name="minutes" value="15"> 15분</label>
-      </fieldset>
-      <div id="today-summary" class="today-summary" aria-live="polite"></div>
+      <div id="today-context" class="today-context" aria-live="polite"></div>
       <div id="today-content"></div>
     </section>
 
     <section id="view-curriculum" class="app-view" data-page="curriculum" aria-labelledby="curriculum-title" hidden>
       <header class="view-header">
-        <p class="kicker">도착점에서 거꾸로</p>
         <h1 id="curriculum-title">커리큘럼</h1>
         <p class="lede">배우는 목록보다, 무엇을 해낼 수 있게 되는지 보여줍니다.</p>
       </header>
@@ -69,7 +61,6 @@
 
     <section id="view-history" class="app-view" data-page="history" aria-labelledby="history-title" hidden>
       <header class="view-header">
-        <p class="kicker">성장의 근거</p>
         <h1 id="history-title">기록</h1>
         <p class="lede">가르침, 인출, 결과물의 변화를 시간순으로 봅니다.</p>
       </header>
@@ -83,7 +74,6 @@
 
     <section id="view-campus" class="app-view" data-page="campus" aria-labelledby="campus-title" hidden>
       <header class="view-header">
-        <p class="kicker">나의 전공과 작업실</p>
         <h1 id="campus-title">나의 대학</h1>
         <p class="lede">경로를 조정하고, 결과물을 다듬고, 다른 분야와 연결합니다.</p>
       </header>
@@ -92,10 +82,10 @@
   </main>
 
   <nav class="bottom-nav" aria-label="주요 메뉴">
-    <a href="#today" data-view="today" aria-current="page"><span aria-hidden="true">●</span>오늘</a>
-    <a href="#curriculum" data-view="curriculum"><span aria-hidden="true">◇</span>커리큘럼</a>
-    <a href="#history" data-view="history"><span aria-hidden="true">↺</span>기록</a>
-    <a href="#campus" data-view="campus"><span aria-hidden="true">⌂</span>나의 대학</a>
+    <a href="#today" data-view="today" aria-current="page">오늘</a>
+    <a href="#curriculum" data-view="curriculum">커리큘럼</a>
+    <a href="#history" data-view="history">기록</a>
+    <a href="#campus" data-view="campus">나의 대학</a>
   </nav>
 
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>

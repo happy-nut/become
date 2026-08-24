@@ -1,4 +1,4 @@
-const CACHE = "become-shell-v5";
+const CACHE = "become-shell-v9";
 const SHELL = ["/", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", event => {

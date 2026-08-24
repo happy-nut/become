@@ -36,13 +36,15 @@ invoked when a deliverable or an outside-field perspective is actually useful.
 
 ## What each role actually does
 
-Advisor interviews one decision at a time and must resolve five decisions before committing a curriculum:
-destination, evidence-backed baseline, prerequisite order, a cut list, and milestones proven by learner work.
+One sentence about the learner's desired identity is enough for Advisor to choose five planning decisions without
+asking follow-up goal questions: destination, baseline, prerequisite order, a cut list, and milestones proven by
+learner work. When performance evidence is absent, Advisor records a conservative unverified baseline and uses the
+first Tutor application to calibrate it.
 Tutor observations update this path, and previously resolved confusion can return as a remedial objective when
 estimated retention decays. Every sequence step needs proof; only the active step can be completed, and its
 evidence must belong to the current curriculum version before the next prerequisite-ready step opens.
 Changing the study goal or core focus archives the old profile and curriculum, deactivates its scheduled
-knowledge without deleting it, and starts a fresh five-decision path.
+knowledge without deleting it, and lets Advisor choose a fresh five-decision path.
 
 Librarian opens the source and separates reachability from content verification. Every candidate receives a
 reasoned decision for relevance, credibility, level fit, signal density, and 1–5 priority, bound to a curriculum
@@ -98,7 +100,7 @@ that perspective to the claimed handoff so it cannot be swapped before completio
 Specialist write commands below run only after that role claims an Orchestrator handoff.
 
 ```bash
-python3 become.py --actor advisor advisor interview --decision destination --question "What must you be able to do?" --answer "Defend a queue-capacity decision with load evidence"
+python3 become.py --actor advisor advisor decide --decision destination --choice "Defend a queue-capacity decision with load evidence" --rationale "Observable operational outcome" --evidence "Learner aspiration"
 python3 become.py --actor advisor advisor curriculum --spec '{...}'
 python3 become.py --actor advisor advisor recommend  # read-only; never writes state
 python3 become.py --actor advisor advisor next       # write path; needs a claimed Advisor handoff
@@ -149,9 +151,10 @@ honest queued/running/completed/failed/interrupted events on reload. Each Codex 
 the learning home. The host imports validated state and appended review events as one recoverable commit only when
 the live fingerprint is unchanged, so a concurrent learner review or CLI write wins instead of being overwritten.
 
-The mobile product has four areas: **Today**, **Curriculum**, **History**, and **My University**. Today keeps one
-5/10/15-minute action above the fold. New learning renders the Tutor's four-why explanation, known-concept
-connection, and example before asking for a different-case application. A due retrieval is a separate screen state:
+The mobile product has four areas: **Today**, **Curriculum**, **History**, and **My University**. Today opens directly
+on what to learn without a session-length setup. New learning teaches the Tutor's four-why explanation and
+known-concept connection as the main reading flow; the different-case application stays in an optional
+disclosure below it. A due retrieval is a separate screen state:
 the reference is neither sent nor placed in the DOM until the learner submits an answer or explicitly gives up.
 Feedback locks the submitted answer, shows the saved weak point and targeted correction, then gives the exact next
 due time. Curriculum exposes observable capabilities, active/completed/locked stages, proof criteria, and cut-list

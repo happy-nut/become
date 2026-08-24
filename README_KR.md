@@ -35,13 +35,14 @@ python3 become.py --actor orchestrator orchestrator workflow-start --intent lear
 
 ## 각 역할이 실제로 하는 일
 
-Advisor는 한 번에 결정 하나를 인터뷰하며 커리큘럼 확정 전 다섯 결정을 반드시 해결합니다. 도착점,
-수행 근거가 있는 baseline, 선수 관계 순서, cut list, 학습자 결과물로 증명하는 milestone입니다.
+사용자가 되고 싶은 모습을 한 문장으로 입력하면 Advisor가 추가 목표 질문 없이 다섯 결정을 직접 합니다.
+도착점, baseline, 선수 관계 순서, cut list, 학습자 결과물로 증명하는 milestone입니다. 수행 증거가
+없으면 baseline을 관찰 전 초기 가설로 낮게 두고 첫 Tutor 적용 수행을 통해 바로 보정합니다.
 Tutor 관찰로 이 경로를 갱신하고, 예전에 해결한 혼동도 예상 기억률이 낮아지면 remedial 목표로 되살립니다.
 모든 sequence step에는 증명 milestone이 필요하며 현재 active step만 완료할 수 있습니다. 현재 curriculum
 version의 증거가 통과해야 다음 prerequisite-ready step이 열립니다.
 학습 목표나 핵심 focus가 바뀌면 이전 profile·curriculum을 history에 보존하고 해당 지식의 자동 복습을
-비활성화한 뒤 다섯 결정을 새로 시작합니다.
+비활성화한 뒤 Advisor가 다섯 결정을 새로 세웁니다.
 
 Librarian은 원문을 열고 접근 가능성과 내용 검증을 구분합니다. 모든 후보를 관련성, 신뢰성, 현재 수준
 적합성, signal 밀도, 1~5 priority로 판단하고 curriculum version·step에 묶습니다. 검증·판정된 signal만
@@ -95,7 +96,7 @@ lens·질문을 직접 만들며, 생성한 perspective는 claim한 handoff에 �
 전문 역할의 쓰기 명령은 Orchestrator가 dispatch한 handoff를 해당 역할이 claim한 뒤 실행합니다.
 
 ```bash
-python3 become.py --actor advisor advisor interview --decision destination --question "무엇을 할 수 있어야 합니까?" --answer "부하 근거로 큐 용량을 방어한다"
+python3 become.py --actor advisor advisor decide --decision destination --choice "부하 근거로 큐 용량을 방어한다" --rationale "운영 판단을 증명하는 도착점" --evidence "사용자가 밝힌 지향점"
 python3 become.py --actor advisor advisor curriculum --spec '{...}'
 python3 become.py --actor advisor advisor recommend  # 읽기 전용: 상태를 바꾸지 않음
 python3 become.py --actor advisor advisor next       # 쓰기: claim된 handoff에서 remedial 목표 생성·갱신
@@ -145,9 +146,9 @@ python3 mobile.py --home .become
 검증된 `state.json`과 새 review event만 동시 변경 충돌이 없을 때 하나의 복구 가능한 커밋으로 가져옵니다.
 실행 중 사용자의 복습이나 CLI 변경이 있으면 에이전트 결과를 버리고 사용자 상태를 보존합니다.
 
-모바일은 **오늘·커리큘럼·기록·나의 대학** 네 영역으로 나뉩니다. 오늘은 첫 화면에 5/10/15분짜리 핵심
-행동 하나만 둡니다. 새 학습에서는 Tutor의 네 가지 왜, 알고 있는 개념과의 연결, 적용 예를 먼저 보여준
-뒤 다른 사례에 적용하게 합니다. 만기 인출은 별도 화면 상태이며, 학습자가 답을 제출하거나 명시적으로
+모바일은 **오늘·커리큘럼·기록·나의 대학** 네 영역으로 나뉩니다. 오늘은 별도 시작 설정 없이 지금 배울
+내용을 바로 보여줍니다. 새 학습에서는 Tutor의 네 가지 왜와 알고 있는 개념과의 연결을 하나의
+설명 흐름으로 먼저 가르치고, 적용 문제는 원할 때 펼쳐 봅니다. 만기 인출은 별도 화면 상태이며, 학습자가 답을 제출하거나 명시적으로
 포기하기 전에는 기준 설명을 응답이나 DOM에 넣지 않습니다. 피드백은 제출 답을 잠그고 저장된 취약 지점,
 그 지점에 필요한 교정, 정확한 다음 시각을 보여줍니다. 커리큘럼에서는 최종 수행 능력, 현재·완료·잠금
 단계와 잠금 이유, 수행 증거, 제외 이유를 확인합니다. 기록은 페이지 단위로 읽고, 나의 대학에서는

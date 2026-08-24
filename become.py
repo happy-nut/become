@@ -1345,6 +1345,12 @@ class Engine:
                     "focus": copy.deepcopy(previous.get("focus", [])),
                     "level_evidence": copy.deepcopy(previous.get("level_evidence", [])),
                     "learning_goals": copy.deepcopy(previous.get("learning_goals", [])),
+                    "curriculum_interview": copy.deepcopy(
+                        previous.get(
+                            "curriculum_interview",
+                            {name: [] for name in CURRICULUM_DECISIONS},
+                        )
+                    ),
                     "archived_at": iso(at),
                 }
             )
@@ -1551,6 +1557,79 @@ class Engine:
                 any(item["answer"] for item in interview[name])
                 for name in CURRICULUM_DECISIONS
             ) else "interviewing",
+            "next_decision": next(
+                (
+                    name
+                    for name in CURRICULUM_DECISIONS
+                    if not any(item["answer"] for item in interview[name])
+                ),
+                None,
+            ),
+        }
+
+    def advisor_decide(
+        self,
+        decision: str,
+        choice: str,
+        rationale: str,
+        evidence: list[str],
+        at: datetime,
+    ) -> dict:
+        if decision not in CURRICULUM_DECISIONS:
+            raise ValueError(
+                f"curriculum decision must be one of: {', '.join(CURRICULUM_DECISIONS)}"
+            )
+        evidence = unique(evidence)
+        if not choice.strip() or not rationale.strip() or not evidence:
+            raise ValueError("advisor decision needs a choice, rationale, and evidence")
+        state = self.store.load()
+        profile = self._profile(state)
+        interview = profile["curriculum_interview"]
+        pending = [
+            item
+            for entries in interview.values()
+            for item in entries
+            if item["answer"] is None
+        ]
+        entries = interview[decision]
+        if pending:
+            entry = pending[0]
+            if entry["decision"] != decision:
+                raise ValueError("resolve the pending curriculum decision first")
+        else:
+            if len(entries) >= 5:
+                raise ValueError("a curriculum decision cannot exceed five records")
+            entry = {
+                "decision": decision,
+                "question": f"Advisor autonomous decision: {decision} {len(entries) + 1}",
+                "answer": None,
+                "asked_at": iso(at),
+                "answered_at": None,
+            }
+            entries.append(entry)
+        all_entries = [item for values in interview.values() for item in values]
+        if any(
+            item is not entry
+            and item.get("answer")
+            and canonical_text(item["answer"]) == canonical_text(choice)
+            for item in all_entries
+        ):
+            raise ValueError("each curriculum decision needs a distinct choice")
+        entry.update({
+            "answer": choice.strip(),
+            "answered_at": iso(at),
+            "decided_by": "advisor",
+            "rationale": rationale.strip(),
+            "evidence": evidence,
+        })
+        profile["updated_at"] = iso(at)
+        self.store.save(state)
+        return {
+            "entry": entry,
+            "status": "ready" if all(
+                any(item["answer"] for item in interview[name])
+                for name in CURRICULUM_DECISIONS
+            ) else "deciding",
             "next_decision": next(
                 (
                     name
@@ -4572,6 +4651,11 @@ def build_parser() -> argparse.ArgumentParser:
     interview.add_argument("--decision", required=True, choices=CURRICULUM_DECISIONS)
     interview.add_argument("--question", required=True)
     interview.add_argument("--answer")
+    decide = advisor_commands.add_parser("decide")
+    decide.add_argument("--decision", required=True, choices=CURRICULUM_DECISIONS)
+    decide.add_argument("--choice", required=True)
+    decide.add_argument("--rationale", required=True)
+    add_list_argument(decide, "--evidence", "repeat for each decision input or observation")
     curriculum = advisor_commands.add_parser("curriculum")
     curriculum.add_argument("--spec", required=True, help="JSON curriculum specification")
     milestone = advisor_commands.add_parser("milestone")
@@ -4733,7 +4817,7 @@ def authorize_specialist_write(engine: Engine, args: argparse.Namespace) -> None
     engine.write_scope = handoff["id"]
     kind = handoff.get("expected_output_kind")
     if args.role == "advisor":
-        curriculum_commands = {"init", "interview", "curriculum"}
+        curriculum_commands = {"init", "interview", "decide", "curriculum"}
         if (args.command in curriculum_commands) != (kind == "curriculum"):
             raise ValueError("Advisor command does not match the claimed handoff output kind")
     expected_ids = set(handoff.get("expected_resource_ids", []))
@@ -4855,6 +4939,10 @@ def run(args: argparse.Namespace) -> object:
             )
         if args.command == "interview":
             return engine.advisor_interview(args.decision, args.question, args.answer, at)
+        if args.command == "decide":
+            return engine.advisor_decide(
+                args.decision, args.choice, args.rationale, args.evidence, at
+            )
         if args.command == "curriculum":
             return engine.advisor_curriculum(json.loads(args.spec), at)
         if args.command == "milestone":
