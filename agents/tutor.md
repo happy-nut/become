@@ -35,6 +35,9 @@ python3 become.py --actor tutor orchestrator complete HANDOFF_ID --summary "결�
 ## Workflow
 
 1. handoff를 claim하고 먼저 `tutor context`를 읽는다. 그다음 `tutor due` 또는 지정된 지식 상태를 읽는다.
+   새 내용을 가르치기 전에 `tutor recall --topic "주제"`로 지금 주제와 겹치는 만기 지식을 확인한다.
+   있으면 teach 흐름 안에서 "저번에 배운 것과 이어진다"며 그 항목의 인출(`tutor review`)을 먼저 끼워
+   넣고, 무관한 만기는 강제하지 않는다.
 2. **연결 기준점을 고른다.** 기준점은 (a) 현재 전공의 active `related` knowledge 또는 (b) Advisor가
    수행 근거로 확정한 curriculum baseline뿐이다. `current_level`·focus·말뿐인 자기평가는 개념 근거로
    쓰지 않는다. `--connection`에서 그 기준점을 실제 이름으로 지칭해야 엔진이 유일한 basis로 기록한다.

@@ -1172,6 +1172,12 @@ class Store:
                 item["active"] = False
                 item["subject_binding"] = None
                 item["migration_import_required"] = True
+            if (
+                not item.get("active", True)
+                and isinstance(item.get("subject_binding"), dict)
+                and not item.get("migration_import_required")
+            ):
+                item["active"] = True
             if "confusion_history" not in item:
                 item["confusion_history"] = [
                     {
@@ -1307,6 +1313,83 @@ class Engine:
             raise ValueError(f"{label} does not belong to the current learning target: {item_id}")
         return item
 
+    @classmethod
+    def _retained_knowledge(cls, state: dict, item_id: str, label: str = "knowledge") -> dict:
+        """Memory maintenance spans subjects: any actively retained record qualifies."""
+        item = cls._find(state["knowledge"], item_id, label)
+        if not item.get("active", True) or not isinstance(item.get("subject_binding"), dict):
+            raise ValueError(f"{label} is not an actively retained record: {item_id}")
+        return item
+
+    def _current_weak_items(self, state: dict) -> list[dict]:
+        binding = self._subject_binding(state) if state.get("profile") else None
+        return [
+            item
+            for item in state["knowledge"]
+            if item.get("active", True)
+            and item.get("subject_binding") == binding
+            and item.get("weak_points")
+        ]
+
+    @staticmethod
+    def _text_tokens(value: str) -> set[str]:
+        return set(
+            re.findall(r"[0-9a-z가-힣]+", unicodedata.normalize("NFKC", value).casefold())
+        )
+
+    def recall_candidates(self, topic: str, at: datetime) -> list[dict]:
+        """Due retrievals related to the topic being taught, for casual interleaving."""
+        if not topic.strip():
+            raise ValueError("recall topic is required")
+        topic_tokens = self._text_tokens(topic)
+        results = []
+        for item in self._due_from_state(self.store.load(), at):
+            item_tokens = self._text_tokens(
+                " ".join([item["title"], item["explanation"], *item["weak_points"]])
+            )
+            # ponytail: prefix-overlap heuristic; swap for a morphological tokenizer
+            # if recall relevance quality ever matters
+            overlap = {
+                token
+                for token in topic_tokens
+                if any(
+                    (token.startswith(other) or other.startswith(token))
+                    and min(len(token), len(other)) >= 2
+                    for other in item_tokens
+                )
+            }
+            if overlap:
+                results.append({
+                    "id": item["id"],
+                    "title": item["title"],
+                    "retention": item["retention"],
+                    "due_at": item["memory"]["due_at"],
+                    "overlap": sorted(overlap),
+                    "prompt": (
+                        f"이 주제는 저번에 배운 ‘{item['title']}’와 이어집니다. "
+                        "자료를 보지 않고 자신의 말로 다시 설명해 보세요."
+                    ),
+                })
+        results.sort(
+            key=lambda entry: (entry["retention"], -len(entry["overlap"]), entry["title"].casefold())
+        )
+        return results
+
+    @staticmethod
+    def _other_majors(state: dict) -> list[str]:
+        profile = state.get("profile") or {}
+        current = canonical_text(profile.get("goal", ""))
+        majors: list[str] = []
+        goals = [item.get("goal", "") for item in profile.get("profile_history", [])] + [
+            (item.get("subject_binding") or {}).get("goal", "")
+            for item in state["knowledge"]
+            if item.get("active", True)
+        ]
+        for goal in goals:
+            if goal and canonical_text(goal) != current and goal not in majors:
+                majors.append(goal)
+        return majors
+
     # Advisor
     def advisor_init(
         self,
@@ -1324,10 +1407,22 @@ class Engine:
         previous = state["profile"] or {}
         requested_focus = unique(focus)
         goal_changed = bool(previous) and goal.strip() != previous.get("goal")
+        archived_match = next(
+            (
+                archived
+                for archived in reversed(previous.get("profile_history", []))
+                if canonical_text(archived.get("goal", "")) == canonical_text(goal)
+            ),
+            None,
+        )
         next_focus = (
             requested_focus
             if requested_focus
-            else ([] if goal_changed else previous.get("focus", []))
+            else (
+                copy.deepcopy(archived_match["focus"]) if goal_changed and archived_match
+                else [] if goal_changed
+                else previous.get("focus", [])
+            )
         )
         target_changed = bool(previous) and (
             goal_changed or next_focus != previous.get("focus", [])
@@ -1363,8 +1458,6 @@ class Engine:
                     }
                 )
                 curriculum_history.append(archived)
-            for item in state["knowledge"]:
-                item["active"] = False
         state["profile"] = {
             "goal": goal.strip(),
             "current_level": level.strip() or (
@@ -2005,7 +2098,10 @@ class Engine:
         if not 1 <= priority <= 5:
             raise ValueError("learning goal priority must be between 1 and 5")
         if knowledge_id:
-            self._current_knowledge(state, knowledge_id)
+            if kind == "remedial":
+                self._retained_knowledge(state, knowledge_id)
+            else:
+                self._current_knowledge(state, knowledge_id)
         profile = self._profile(state)
         existing = next(
             (
@@ -2162,11 +2258,7 @@ class Engine:
                 "title": item["title"],
                 "reason": f"estimated retention {retention:.1%}",
             }
-        weak = [
-            item
-            for item in state["knowledge"]
-            if item.get("active", True) and item["weak_points"]
-        ]
+        weak = self._current_weak_items(state)
         if weak:
             weak.sort(key=lambda item: (-len(item["weak_points"]), item["updated_at"]))
             item = weak[0]
@@ -2834,6 +2926,7 @@ class Engine:
                 }
                 for item in state["knowledge"]
                 if item.get("active", True)
+                and item.get("subject_binding") == self._subject_binding(state)
             ],
         }
 
@@ -2863,12 +2956,21 @@ class Engine:
         why_chain = teaching_why_chain(explanation)
         state = self.store.load()
         profile = self._profile(state)
-        item = self._current_knowledge(state, item_id)
+        item = self._retained_knowledge(state, item_id)
         related = [
-            self._current_knowledge(state, related_id)
-            for related_id in item.get("related", [])
+            anchor
+            for anchor in (
+                self._find(state["knowledge"], related_id, "knowledge")
+                for related_id in item.get("related", [])
+            )
+            if anchor.get("active", True)
+            and anchor.get("subject_binding") == item.get("subject_binding")
         ]
-        baseline = (profile.get("curriculum") or {}).get("baseline", {})
+        baseline = (
+            (profile.get("curriculum") or {}).get("baseline", {})
+            if item.get("subject_binding") == self._subject_binding(state)
+            else {}
+        )
         candidates = [
             ({"kind": "knowledge", "id": known["id"]}, known["title"])
             for known in related
@@ -2876,26 +2978,15 @@ class Engine:
             ({"kind": "curriculum_baseline", "value": value}, value)
             for value in baseline.get("can_do", []) + baseline.get("assisted", [])
         ]
-        connection_tokens = set(
-            re.findall(r"[0-9a-z가-힣]+", unicodedata.normalize("NFKC", connection).casefold())
-        )
+        connection_tokens = self._text_tokens(connection)
         scored = [
             (
                 1 if canonical_text(anchor) in canonical_text(connection) else 0,
-                len(
-                    connection_tokens
-                    & set(
-                        re.findall(
-                            r"[0-9a-z가-힣]+",
-                            unicodedata.normalize("NFKC", anchor).casefold(),
-                        )
-                    )
-                ),
+                len(connection_tokens & self._text_tokens(anchor)),
                 basis,
             )
             for basis, anchor in candidates
-            if connection_tokens
-            & set(re.findall(r"[0-9a-z가-힣]+", unicodedata.normalize("NFKC", anchor).casefold()))
+            if connection_tokens & self._text_tokens(anchor)
         ]
         best = max((score[:2] for score in scored), default=None)
         matches = [basis for exact, overlap, basis in scored if (exact, overlap) == best]
@@ -2963,7 +3054,7 @@ class Engine:
             raise ValueError("review prompt, answer, and rationale are required")
         state = self.store.load()
         profile = self._profile(state)
-        item = self._current_knowledge(state, item_id)
+        item = self._retained_knowledge(state, item_id)
         memory = item["memory"]
         ready_before = self._ready_for_retrieval(item)
         item["interaction_count"] += 1
@@ -3556,10 +3647,23 @@ class Engine:
 
     # Orchestrator handoffs
     def route(self, intent: str, at: datetime) -> dict:
-        if intent not in {"plan", "material", "learn", "artifact", "write", "perspective", "resume"}:
+        if intent not in {"plan", "material", "learn", "review", "artifact", "write", "perspective", "resume"}:
             raise ValueError(
-                "route intent must be plan, material, learn, artifact, perspective, or resume"
+                "route intent must be plan, material, learn, review, artifact, perspective, or resume"
             )
+        if intent == "review":
+            due = self._due_from_state(self.store.load(), at)
+            if due:
+                return {
+                    "role": "advisor",
+                    "workflow": ["advisor", "tutor", "advisor"],
+                    "reason": "explicit review: due retrieval drives an adaptive goal",
+                }
+            return {
+                "role": "advisor",
+                "workflow": [],
+                "reason": "no due retrieval right now; continue forward learning",
+            }
         if intent == "resume":
             return {
                 "role": "orchestrator",
@@ -3599,16 +3703,14 @@ class Engine:
                 "role": "roommate",
                 "workflow": ["roommate"],
                 "reason": "explicit outside-field perspective request",
+                "other_majors": self._other_majors(self.store.load()),
             }
         state = self.store.load()
-        due_or_weak = self._due_from_state(state, at) or any(
-            item.get("active", True) and item["weak_points"] for item in state["knowledge"]
-        )
-        if due_or_weak:
+        if self._current_weak_items(state):
             return {
                 "role": "advisor",
                 "workflow": ["advisor", "tutor", "advisor"],
-                "reason": "due knowledge or a saved confusion needs an adaptive learning goal",
+                "reason": "a saved confusion needs an adaptive learning goal",
             }
         if not state["profile"]:
             return {
@@ -3777,10 +3879,7 @@ class Engine:
         expected_ids: list[str] = []
         if target == "tutor":
             due = self._due_from_state(state, at)
-            weak = [
-                item for item in state["knowledge"]
-                if item.get("active", True) and item.get("weak_points")
-            ]
+            weak = self._current_weak_items(state)
             if self.route("learn", at).get("role") != "tutor" and not (
                 dependencies and (due or weak)
             ):
@@ -3819,7 +3918,10 @@ class Engine:
         route = self.route(intent, at)
         roles = route.get("workflow", [])
         if not roles:
-            raise ValueError("resume does not create a specialist workflow")
+            raise ValueError(
+                "no due retrieval to review right now" if intent == "review"
+                else "resume does not create a specialist workflow"
+            )
         state = self.store.load()
         bound_collection = state["artifacts"] if intent in {"artifact", "write"} else None
         if bound_collection is not None:
@@ -3853,11 +3955,11 @@ class Engine:
         profile = state.get("profile") or {}
         needs_curriculum = not self._active_curriculum_step(profile.get("curriculum"))
         due = self._due_from_state(state, at)
-        retrieval_ids = [due[0]["id"]] if due else []
+        if intent == "review" and not due:
+            raise ValueError("no due retrieval to review right now")
+        retrieval_ids = [due[0]["id"]] if intent == "review" and due else []
         tutor_target_ids = retrieval_ids or [
-            item["id"]
-            for item in state["knowledge"]
-            if item.get("active", True) and item.get("weak_points")
+            item["id"] for item in self._current_weak_items(state)
         ][:1]
         workflow = {
             "id": f"workflow-{uuid.uuid4().hex[:8]}",
@@ -4592,14 +4694,14 @@ def build_parser() -> argparse.ArgumentParser:
     route = orchestrator_commands.add_parser("route")
     route.add_argument(
         "--intent",
-        choices=("plan", "material", "learn", "artifact", "write", "perspective", "resume"),
+        choices=("plan", "material", "learn", "review", "artifact", "write", "perspective", "resume"),
         default="learn",
     )
     workflow_start = orchestrator_commands.add_parser("workflow-start")
     workflow_start.add_argument(
         "--intent",
         required=True,
-        choices=("plan", "material", "learn", "artifact", "write", "perspective"),
+        choices=("plan", "material", "learn", "review", "artifact", "write", "perspective"),
     )
     workflow_start.add_argument("--request", required=True)
     add_list_argument(workflow_start, "--resource-id", "bind the requested artifact")
@@ -4712,6 +4814,8 @@ def build_parser() -> argparse.ArgumentParser:
     tutor_commands.add_parser("list")
     tutor_commands.add_parser("context")
     tutor_commands.add_parser("due")
+    recall = tutor_commands.add_parser("recall")
+    recall.add_argument("--topic", required=True)
     relate = tutor_commands.add_parser("relate")
     relate.add_argument("knowledge_id")
     relate.add_argument("related_id")
@@ -4993,6 +5097,8 @@ def run(args: argparse.Namespace) -> object:
             return engine.tutor_context()
         if args.command == "due":
             return engine.due(at)
+        if args.command == "recall":
+            return engine.recall_candidates(args.topic, at)
         if args.command == "relate":
             return engine.knowledge_relate(args.knowledge_id, args.related_id, at)
         if args.command == "teach":

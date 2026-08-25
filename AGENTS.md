@@ -56,6 +56,27 @@ python3 become.py --actor orchestrator orchestrator workflow-next WORKFLOW_ID --
 
 호스트가 별도 에이전트 실행을 지원하지 않으면 한 컨텍스트에서 역할을 합쳐 흉내 내지 않는다.
 
+## 호스트별 전문 역할 실행
+
+Orchestrator는 현재 세션이다. 전문 역할은 `agents/{role}.md`를 계약으로 받는 **별도 컨텍스트**에서
+실행하며, 프롬프트에는 역할 계약 전문, handoff id, 필요한 맥락만 넣는다. 전문 컨텍스트는 같은 저장소
+루트에서 `python3 become.py --actor {role} ...`로 자기 resource를 만든 뒤 handoff를 complete한다.
+
+- **Claude Code**: 역할마다 하위 에이전트(Task)를 하나 띄운다. 프롬프트 서두에 `agents/{role}.md` 전문을
+  넣고 "이 계약이 너의 유일한 계약이다"라고 명시한다.
+- **Codex CLI**: 이 세션이 Orchestrator다. 역할마다 서브프로세스로 격리 실행한다.
+
+  ```bash
+  codex exec "$(cat agents/tutor.md)
+
+  너는 위 계약만 따르는 Tutor다. handoff HANDOFF_ID를 claim하고 작업 후 complete하라. 맥락: ..."
+  ```
+
+- **Gemini CLI**: `GEMINI.md`가 진입점이며 위와 같은 방식으로 별도 컨텍스트를 만든다.
+
+어느 호스트든 상태는 저장소의 `.become/`에 쌓인다. 여러 checkout·worktree를 쓰면 상태가 갈라지므로,
+실제 학습은 한 clone에서 하거나 `BECOME_HOME`으로 상태 위치를 고정한다.
+
 ## 역할과 완료 조건
 
 | 역할 | 책임 | 완료를 증명하는 resource |
@@ -75,6 +96,9 @@ Librarian → Tutor → Advisor
 Tutor → Advisor
 ```
 
+명시적 복습 요청(`--intent review`)은 만기 인출이 있을 때만 `Advisor → Tutor → Advisor`를 연다.
+그 밖의 학습에서는 만기를 앞세우지 않고, Tutor가 관련 만기만 recall로 끼워 넣는다.
+
 Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 관점이 필요할 때 별도로 호출한다.
 
 ## 핵심 역할 계약
@@ -91,8 +115,9 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   curriculum version의 artifact는 재사용하지 않는다.
 - 동일 spec 재제출은 version/history를 늘리지 않는다. 실제 수정 때도 증명 조건이 같은 완료 milestone은
   보존하고, cut list와 required step의 충돌은 거부한다.
-- 목표·핵심 focus가 바뀌면 이전 profile·curriculum은 history로 보존하되 현재 경로와 자동 복습에서는
-  비활성화하고 다섯 결정을 Advisor가 새로 세운다.
+- 목표·핵심 focus가 바뀌면 이전 profile·curriculum은 history로 보존하고 다섯 결정을 Advisor가 새로
+  세운다. 이전 전공의 지식은 유지 모드로 남아 만기 인출과 remedial 목표를 계속 받고, 새 학습·teach
+  연결·practical 목표에서는 제외된다. 같은 목표로 돌아오면 그 전공 지식이 다시 현재 학습 대상이 된다.
 - Tutor의 독립 수행·혼동·전이 결과로 수준과 경로를 갱신한다. `advisor observe`는 그 결과를 만든 완료
   Tutor handoff에 묶이며 같은 observation을 두 Advisor 갱신에 재사용하지 않는다.
 - 예상 기억률이 목표 아래로 내려간 과거 혼동은 remedial 목표로 다시 활성화한다.
@@ -112,6 +137,8 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 ### Tutor
 
 - 새 학습과 만기 전 약점은 질문으로 시험하지 않고 `tutor teach`로 먼저 알려준다.
+- teach 전에 `tutor recall --topic`으로 지금 주제와 겹치는 만기 지식을 확인하고, 있으면 "저번에 배운
+  것과 이어진다"며 인출을 흐름에 끼워 넣는다. 무관한 만기는 이 흐름에 강제로 넣지 않는다.
 - 새 학습의 중심은 온전한 설명 한 번이다. 질문은 설명을 대신하지 않으며, 설명 뒤 별개 사례 적용 하나로 제한한다.
 - 혼동을 정의·인과·조건·경계·순서·트레이드오프로 나눠 처음 어긋난 지점을 저장한다.
 - 모든 설명은 `왜 쓰는가 → 왜 이렇게 되었는가 → 왜 이 결과가 나오는가 → 그래서 어디에 쓰는가`를
@@ -142,6 +169,8 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 ### Roommate
 
 - 세션 체크포인트가 아니다. 현재 분야와 다른 외부 분야의 구체적 원리를 렌즈로 가져온다.
+- 외부 분야로는 학습자의 실제 다른 전공(유지 모드 전공)을 우선 후보로 쓴다.
+  `orchestrator route --intent perspective`가 `other_majors` 목록을 돌려준다.
 - 한 번에 pending 연결 질문 하나만 두고 학습자 답 뒤에만 insight/no_connection/needs_verification을 기록한다.
 - 같은 문제에 이미 사용한 lens와 질문 조합을 반복하지 않는다.
 - 연결 mapping과 함께 비유가 깨지는 limits를 반드시 남긴다.
@@ -183,6 +212,7 @@ python3 become.py --actor librarian librarian add --title "자료" --source "원
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{...}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
 python3 become.py --actor tutor tutor context
+python3 become.py --actor tutor tutor recall --topic "지금 가르치는 주제"
 python3 become.py --actor tutor tutor relate KNOWLEDGE_ID RELATED_ID
 python3 become.py --actor tutor tutor teach KNOWLEDGE_ID --explanation "왜 쓰는가: ... 왜 이렇게 되었는가: ... 왜 이 결과가 나오는가: ... 그래서 어디에 쓰는가: ..." --connection "저장된 related 지식 또는 curriculum baseline"
 python3 become.py --actor tutor tutor review KNOWLEDGE_ID good --confidence complete --prompt "질문" --answer "학습자 원답" --rationale "판정 근거"
@@ -209,20 +239,21 @@ python3 become.py --actor tutor orchestrator complete HANDOFF_ID --summary "결�
 완료 결과는 `summary`, `next_role`, `resource_ids`, `issues`, `observations`, `recommendations`를 저장한다.
 요약만으로는 완료되지 않으며 역할별 유효 상태가 된 실제 resource id가 필요하다.
 
-## 상태와 모바일
+## 상태
 
 개인 상태는 `.become/state.json`, 학습 감사 로그는 `.become/reviews.jsonl`에 저장된다. 모든 writer는 같은
 프로세스 간 잠금과 비교 후 저장을 사용하며, 두 파일을 함께 바꾸는 도중 중단되면 로컬 저널로 이전의
 일관된 쌍을 자동 복구한다.
 `.become/`은 Git에서 제외된다. `advisor recommend`는 읽기 전용이고, `advisor next`는 claim된 handoff에서
-목표를 쓰는 명령이다. 모바일 PWA는 같은 상태의 복습 클라이언트이자, Codex CLI를 임시 workspace에서
-실행하고 검증·충돌 확인을 통과한 상태만 가져오는 에이전트 호스트다. v3 상태는 검증되지 않은 handoff·지식·artifact provenance를 현재 증거로
+목표를 쓰는 명령이다. 만기 인출은 무조건 앞세우지 않는다. Tutor가 `tutor recall --topic`으로 현재
+주제와 겹치는 만기 지식을 찾아 "저번에 배운 것"으로 자연스럽게 끼워 넣는 것이 기본이고, 명시적 복습은
+`orchestrator route --intent review`로 연다. v3 상태는 검증되지 않은 handoff·지식·artifact provenance를 현재 증거로
 꾸며내지 않고 격리하며, 이미 v4인 상태의 nested role/workflow 손상은 조용히 보정하지 않고 거부한다.
 
 ## 검증
 
 ```bash
-python3 -m py_compile become.py mobile.py
+python3 -m py_compile become.py
 python3 -m unittest -v
 node /Users/happynut/.codex/skills/unlazy/scripts/gate-check.mjs --reverify GATES.md
 ```

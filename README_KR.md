@@ -17,12 +17,14 @@ Orchestrator  workflow 순서·의존성·중단과 재개
 ```
 
 `AGENTS.md`는 조정자 계약, `agents/*.md`는 전문 역할의 독립 책임과 권한, `become.py`는 산출물 저장과
-전이 검증을 담당합니다. Python 표준 라이브러리만 사용합니다. 데스크톱에서는 현재 에이전트 호스트를,
-모바일에서는 `mobile.py`가 격리해 호출하는 Codex CLI를 사용해 실제 전문 컨텍스트를 실행합니다.
+전이 검증을 담당합니다. Python 표준 라이브러리만 사용합니다. 실제 전문 컨텍스트는 현재 에이전트
+호스트(Claude Code, Codex CLI 등)에서 실행합니다.
 
 ## 시작하기
 
-Orchestrator에게 학습 요청을 하거나 로컬에서 첫 경로를 확인합니다.
+이 저장소를 에이전트 호스트에서 열고 배우고 싶은 것을 말하면 됩니다. Claude Code는 `CLAUDE.md`를,
+Codex CLI는 `AGENTS.md`를, Gemini CLI는 `GEMINI.md`를 자동으로 읽어 그 세션이 Orchestrator가 됩니다.
+로컬에서 첫 경로를 직접 확인할 수도 있습니다.
 
 ```bash
 python3 become.py --actor orchestrator orchestrator route --intent learn
@@ -41,8 +43,9 @@ python3 become.py --actor orchestrator orchestrator workflow-start --intent lear
 Tutor 관찰로 이 경로를 갱신하고, 예전에 해결한 혼동도 예상 기억률이 낮아지면 remedial 목표로 되살립니다.
 모든 sequence step에는 증명 milestone이 필요하며 현재 active step만 완료할 수 있습니다. 현재 curriculum
 version의 증거가 통과해야 다음 prerequisite-ready step이 열립니다.
-학습 목표나 핵심 focus가 바뀌면 이전 profile·curriculum을 history에 보존하고 해당 지식의 자동 복습을
-비활성화한 뒤 Advisor가 다섯 결정을 새로 세웁니다.
+학습 목표나 핵심 focus가 바뀌면 이전 profile·curriculum을 history에 보존하고 Advisor가 다섯 결정을
+새로 세웁니다. 이전 전공의 지식은 유지 모드로 남아 만기 인출과 remedial 목표를 계속 받고, 새 학습과
+practical 목표에서는 제외되며, 같은 목표로 돌아오면 다시 현재 학습 대상이 됩니다.
 
 Librarian은 원문을 열고 접근 가능성과 내용 검증을 구분합니다. 모든 후보를 관련성, 신뢰성, 현재 수준
 적합성, signal 밀도, 1~5 priority로 판단하고 curriculum version·step에 묶습니다. 검증·판정된 signal만
@@ -51,7 +54,9 @@ shelf에 들어가며 빈 원문과 현재 수준보다 너무 쉽거나 어려�
 내용 지문을 다시 확인합니다. Tutor는 오래된 version, 미래 step, 사라지거나 바뀐 원문, 미선택 자료를
 근거로 사용할 수 없습니다.
 
-Tutor는 새 내용을 시험하기 전에 먼저 가르칩니다. 처음 헷갈린 지점을 포착하고 `왜 쓰는가`, `왜 이렇게
+Tutor는 새 내용을 시험하기 전에 먼저 가르칩니다. 만기 인출은 무조건 앞세우지 않고, `tutor recall`로
+지금 주제와 겹치는 만기 지식을 찾아 "저번에 배운 것"으로 자연스럽게 끼워 넣습니다. 명시적 복습은
+`--intent review`로 엽니다. 처음 헷갈린 지점을 포착하고 `왜 쓰는가`, `왜 이렇게
 되었는가`, `왜 이 결과가 나오는가`, `그래서 어디에 쓰는가`를 모두 설명합니다. 연결 기준은 현재 전공의
 active related knowledge 하나 또는 Advisor가 확정한 curriculum baseline 하나입니다. 실제 질문·학습자 원답·
 판정 근거·확신도·약점과 양방향 개념 연결을 저장합니다. 전공이 바뀌면 제목이 같은 개념도 기억·혼동을
@@ -72,6 +77,8 @@ Roommate는 세션 체크포인트가 아닙니다. 현재 전공과 다른 분�
 하나를 던지고 학습자의 답을 기다립니다. 연결 mapping과 비유가 깨지는 지점까지 저장하며, 억지 연결은
 `no_connection`, 확인이 필요하면 `needs_verification`으로 끝낼 수 있습니다.
 답하지 않은 perspective는 한 번에 하나만 존재할 수 있고, 같은 lens·질문 조합을 반복할 수 없습니다.
+학습자에게 다른 전공이 저장되어 있으면 `route --intent perspective`가 `other_majors`로 그 목록을
+돌려주며, 지어낸 분야보다 실제 다른 전공이 우선 렌즈가 됩니다.
 
 Orchestrator는 workflow 순서와 세션 연속성을 소유합니다. 의존 step은 앞 작업이 끝나기 전에 claim할
 수 없고, summary나 무관한 과거 id로 완료할 수도 없습니다. step 시작 뒤 새로 만들거나 갱신한 expected
@@ -103,6 +110,7 @@ python3 become.py --actor advisor advisor next       # 쓰기: claim된 handoff�
 python3 become.py --actor librarian librarian add --title "공식 문서" --source "/path/to/source" --evidence "직접 읽은 범위"
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{...}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
+python3 become.py --actor tutor tutor recall --topic "지금 가르치는 주제"  # 흐름에 끼워 넣을 관련 만기 지식
 python3 become.py --actor tutor tutor teach KNOWLEDGE_ID --explanation "왜 쓰는가: ... 왜 이렇게 되었는가: ... 왜 이 결과가 나오는가: ... 그래서 어디에 쓰는가: ..." --connection "저장된 related 지식 또는 curriculum baseline"
 python3 become.py --actor tutor tutor review KNOWLEDGE_ID good --confidence complete --prompt "질문" --answer "학습자 원답" --rationale "판정 근거"
 python3 become.py --actor learner editor add --title "결과물" --content "초안" --purpose "목적" --audience "독자"
@@ -114,6 +122,7 @@ python3 become.py --actor orchestrator orchestrator session-resume
 python3 become.py --actor orchestrator orchestrator dispatch --to advisor --task "경로 갱신" --output-kind advisor_update
 python3 become.py --actor orchestrator orchestrator dispatch --to editor --task "현재 글 검토" --resource-id ARTIFACT_ID
 python3 become.py --actor orchestrator orchestrator workflow-start --intent perspective --request "외부 관점" --current-field "분산 시스템" --problem "백프레셔"
+python3 become.py --actor orchestrator orchestrator route --intent review  # 명시적 복습; 만기가 있을 때만 열림
 ```
 
 전체 명령은 `python3 become.py --help`와 각 역할의 `--help`에서 확인합니다.
@@ -121,7 +130,7 @@ python3 become.py --actor orchestrator orchestrator workflow-start --intent pers
 ## 기억과 근거
 
 개인 상태는 `.become/state.json`, 학습 감사 이벤트는 `.become/reviews.jsonl`에 저장됩니다. `.become/`은
-Git에서 제외됩니다. 모든 CLI·PWA 쓰기는 같은 프로세스 간 잠금과 비교 후 저장을 사용하며, 두 파일을 함께
+Git에서 제외됩니다. 모든 CLI 쓰기는 같은 프로세스 간 잠금과 비교 후 저장을 사용하며, 두 파일을 함께
 바꾸는 동안 강제 종료되면 로컬 트랜잭션 저널로 이전의 일관된 쌍을 자동 복구합니다. 다른 비공개 위치는
 `BECOME_HOME`으로 지정합니다.
 v3 상태는 출처를 꾸며내지 않는 보수적 마이그레이션을 하며, 이미 v4인 nested 역할·workflow 손상은
@@ -134,54 +143,20 @@ v3 상태는 출처를 꾸며내지 않는 보수적 마이그레이션을 하�
 `due_at` 전 상호작용은 `exposure`라서 안정도를 올리지 않습니다. 간격 뒤 독립 답변만 `retrieval`입니다.
 부분 확신이나 실패에는 구체적인 약점이 필요하며, 해결된 혼동도 history에 남아 나중에 다시 목표가 됩니다.
 
-## 모바일 개인 대학
-
-```bash
-python3 mobile.py --home .become
-```
-
-`http://127.0.0.1:8765`를 열면 복습과 ALTER 에이전트 대화를 한 화면에서 이어갑니다. 메시지는 즉시
-작업 id를 돌려주고 서버의 단일 큐에서 실행되므로 1–3분 걸리는 역할도 페이지를 닫았다 다시 열어 상태와
-실제 진행 이벤트를 복구할 수 있습니다. Codex는 매 작업마다 임시 workspace의 상태 복제본만 보며,
-검증된 `state.json`과 새 review event만 동시 변경 충돌이 없을 때 하나의 복구 가능한 커밋으로 가져옵니다.
-실행 중 사용자의 복습이나 CLI 변경이 있으면 에이전트 결과를 버리고 사용자 상태를 보존합니다.
-
-모바일은 **오늘·커리큘럼·기록·나의 대학** 네 영역으로 나뉩니다. 오늘은 별도 시작 설정 없이 지금 배울
-내용을 바로 보여줍니다. 새 학습에서는 Tutor의 네 가지 왜와 알고 있는 개념과의 연결을 하나의
-설명 흐름으로 먼저 가르치고, 적용 문제는 원할 때 펼쳐 봅니다. 만기 인출은 별도 화면 상태이며, 학습자가 답을 제출하거나 명시적으로
-포기하기 전에는 기준 설명을 응답이나 DOM에 넣지 않습니다. 피드백은 제출 답을 잠그고 저장된 취약 지점,
-그 지점에 필요한 교정, 정확한 다음 시각을 보여줍니다. 커리큘럼에서는 최종 수행 능력, 현재·완료·잠금
-단계와 잠금 이유, 수행 증거, 제외 이유를 확인합니다. 기록은 페이지 단위로 읽고, 나의 대학에서는
-학습자가 쓴 Editor 결과물과 수정 버전, Roommate 연결과 비유의 한계, 내부 handoff 로그를 숨긴 학습 지원
-상태를 다룹니다.
-
-앱 셸과 정제된 현재 강의·경로·기록·대학 사본은 오프라인에서도 읽을 수 있습니다. 초안과 제한된 답안
-대기열만 브라우저에 임시 저장하고, 정본은 계속 `state.json`과 `reviews.jsonl`입니다. 각 답안은 안정적인
-요청 id와 지식 상호작용 순서를 갖습니다. 재연결 때 같은 id는 원래 receipt를 돌려주므로 중복 기록되지
-않고, 오래된 답은 충돌로 남으며, 서버가 단 하나의 review event를 확인한 뒤에만 대기열에서 제거됩니다.
-API와 숨겨진 인출 설명은 서비스 워커가 캐시하지 않습니다. 새 셸은 사용자가 안전한 새로고침을 선택한
-뒤에만 활성화됩니다.
-
-기본 loopback은 토큰 없이 동작합니다. 원격 접속은 HTTPS 또는 인증된 private tunnel 뒤에서
-`--require-token`을 사용하고 `BECOME_MOBILE_TOKEN`을 설정합니다. non-loopback 평문 HTTP는 기본 거부하며,
-`--allow-insecure-http`는 Bearer가 암호화를 제공하지 않는다는 위험을 명시적으로 감수할 때만 씁니다.
-
 ## 검증
 
 ```bash
-python3 -m py_compile become.py mobile.py
+python3 -m py_compile become.py
 python3 -m unittest -v
 ```
 
 역할별 성공과 잘못된 전이, 권한 거부, workflow 의존성, 기존 상태 마이그레이션, 자료 gating, 기억 시간,
-로컬 PWA, 여섯 역할 전체 여정을 검증합니다.
+여섯 역할 전체 여정을 검증합니다.
 
 ## 구조
 
 ```text
 become.py       로컬 실행·상태 엔진
-mobile.py       격리된 Codex 실행·작업 큐·인증을 포함한 모바일 API 서버
-mobile/         설치 가능한 네 영역 개인 대학 PWA
 AGENTS.md       Orchestrator 계약
 agents/         다섯 전문 역할 계약
 tests/          역할·마이그레이션·전체 여정 검증
