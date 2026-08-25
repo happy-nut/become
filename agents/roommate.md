@@ -36,6 +36,8 @@ python3 become.py --actor orchestrator orchestrator workflow-start --intent pers
 ## Workflow
 
 1. handoff에 고정된 현재 분야와 문제를 읽는다. 이전 perspective를 보고 아직 쓰지 않은 먼 분야를 고른다.
+   학습자의 실제 다른 전공(유지 모드 전공)이 있으면 지어낸 분야보다 우선 후보로 쓴다.
+   `orchestrator route --intent perspective`의 `other_majors`가 그 목록이다.
 2. **Roommate 자신이** 외부 분야의 구체적 작동 원리를 `lens`로 만들고 연결 질문을 한 번에 하나만
    던진다. 생성한 perspective는 claim한 handoff id에 귀속된다. 같은 문제에
    이미 사용한 lens·질문 조합은 반복하지 않는다.

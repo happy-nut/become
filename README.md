@@ -18,12 +18,13 @@ Orchestrator  workflow order, dependencies, interruption and resumption
 
 `AGENTS.md` is the coordinator contract, `agents/*.md` defines each specialist's isolated responsibilities and
 permissions, and `become.py` stores and validates their outputs. It uses only the Python standard library.
-Desktop sessions use the current agent host; `mobile.py` runs real specialist contexts through an isolated
-Codex CLI workspace.
+Real specialist contexts run in the current agent host (Claude Code, Codex CLI, and similar).
 
 ## Start
 
-Ask the Orchestrator to learn something, or inspect the first route locally:
+Open this repository in your agent host and just ask to learn something. Claude Code loads `CLAUDE.md`,
+Codex CLI natively reads `AGENTS.md`, and Gemini CLI reads `GEMINI.md`; each session becomes the
+Orchestrator. You can also inspect the first route locally:
 
 ```bash
 python3 become.py --actor orchestrator orchestrator route --intent learn
@@ -43,8 +44,10 @@ first Tutor application to calibrate it.
 Tutor observations update this path, and previously resolved confusion can return as a remedial objective when
 estimated retention decays. Every sequence step needs proof; only the active step can be completed, and its
 evidence must belong to the current curriculum version before the next prerequisite-ready step opens.
-Changing the study goal or core focus archives the old profile and curriculum, deactivates its scheduled
-knowledge without deleting it, and lets Advisor choose a fresh five-decision path.
+Changing the study goal or core focus archives the old profile and curriculum and lets Advisor choose a
+fresh five-decision path. The old subject's knowledge stays in maintenance: it keeps its due retrievals and
+remedial goals but is excluded from new teaching and practical goals, and returning to that goal makes it
+the current learning target again.
 
 Librarian opens the source and separates reachability from content verification. Every candidate receives a
 reasoned decision for relevance, credibility, level fit, signal density, and 1–5 priority, bound to a curriculum
@@ -57,7 +60,9 @@ Tutor teaches new material before testing it, identifies the first point of conf
 is used, why it took this form, why the result follows, and where it is applied. A connection must resolve to one
 active related knowledge item in the current subject or one Advisor-committed curriculum baseline.
 It stores the exact prompt, answer, rating rationale, confidence, weak points, and bidirectional concept links.
-Same-titled concepts in different subjects keep separate memory state. A new-learning step requires
+Same-titled concepts in different subjects keep separate memory state. Due retrievals are not forced up front:
+`tutor recall` finds due knowledge overlapping the current topic so Tutor can weave it in as "remember this
+from last time", and an explicit review session opens with `--intent review`. A new-learning step requires
 post-claim teaching followed by a different-case application review; a due step requires an unaided retrieval
 review followed by why/connection teaching that addresses the answer. The first application review, not the row
 creation or teaching timestamp, starts the forgetting clock.
@@ -75,11 +80,13 @@ Roommate is not a session checkpoint. It introduces a concrete mechanism from a 
 connection question, waits for the learner's answer, and records the mapping and where the analogy breaks.
 Connections may explicitly end as `no_connection` or `needs_verification` instead of being forced.
 Only one unanswered perspective can exist at a time, and the same lens/question pair cannot be replayed.
+When the learner has other stored subjects, `route --intent perspective` lists them as `other_majors`, the
+preferred outside fields before any invented one.
 
 Orchestrator owns workflow order and session continuity. A dependent step cannot be claimed early, and a workflow
 step cannot complete with a summary or an unrelated old id: it needs the expected output created or changed
 after that step began. Completed results are copied into the next step's context. This is why the
-coordinator exists—it enforces accountability without pretending to plan, teach, research, edit, or invent a
+coordinator exists: it enforces accountability without pretending to plan, teach, research, edit, or invent a
 perspective itself. Manual handoffs use the same role-completion checks and take their snapshot at claim time.
 If a parallel request changes the bound curriculum version, the stale workflow/handoff becomes
 `superseded`/`cancelled`. The plan performing a goal/focus change rebinds to the new target; other stale work is
@@ -107,6 +114,7 @@ python3 become.py --actor advisor advisor next       # write path; needs a claim
 python3 become.py --actor librarian librarian add --title "official guide" --source "/path/to/source" --evidence "sections read directly"
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{...}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
+python3 become.py --actor tutor tutor recall --topic "topic being taught"  # related due knowledge to weave in
 python3 become.py --actor tutor tutor teach KNOWLEDGE_ID --explanation "왜 쓰는가: ... 왜 이렇게 되었는가: ... 왜 이 결과가 나오는가: ... 그래서 어디에 쓰는가: ..." --connection "stored related knowledge or curriculum baseline"
 python3 become.py --actor tutor tutor review KNOWLEDGE_ID good --confidence complete --prompt "question" --answer "learner answer" --rationale "rating basis"
 python3 become.py --actor learner editor add --title "deliverable" --content "draft" --purpose "decision" --audience "team"
@@ -118,6 +126,7 @@ python3 become.py --actor orchestrator orchestrator session-resume
 python3 become.py --actor orchestrator orchestrator dispatch --to advisor --task "update path" --output-kind advisor_update
 python3 become.py --actor orchestrator orchestrator dispatch --to editor --task "review current draft" --resource-id ARTIFACT_ID
 python3 become.py --actor orchestrator orchestrator workflow-start --intent perspective --request "outside lens" --current-field "distributed systems" --problem "backpressure"
+python3 become.py --actor orchestrator orchestrator route --intent review  # explicit review; opens only when something is due
 ```
 
 Use `python3 become.py --help` and each role's `--help` for the complete command surface.
@@ -125,7 +134,7 @@ Use `python3 become.py --help` and each role's `--help` for the complete command
 ## Memory and evidence
 
 Personal state lives in `.become/state.json`; review audit events live in `.become/reviews.jsonl`. `.become/` is
-ignored by Git. Every CLI and PWA writer uses the same inter-process lock and compare-and-swap; a local transaction
+ignored by Git. Every CLI writer uses the same inter-process lock and compare-and-swap; a local transaction
 journal restores the previous consistent pair if the process exits while both files are changing. Set `BECOME_HOME`
 to use another private directory.
 Version-3 state is migrated without inventing provenance; malformed nested role or orchestration state already marked v4 is
@@ -139,55 +148,20 @@ An interaction before `due_at` is `exposure` and cannot increase stability. Only
 delay is `retrieval`. Partial or failed confidence requires a concrete weak point. Resolved confusion remains in
 history so Advisor can schedule it again after likely forgetting.
 
-## Mobile personal university
-
-```bash
-python3 mobile.py --home .become
-```
-
-Open `http://127.0.0.1:8765` for review and real ALTER-agent conversation. A message immediately returns a durable
-job id; the single server queue continues the usual 1–3 minute role run after the page closes, and the PWA resumes
-honest queued/running/completed/failed/interrupted events on reload. Each Codex run sees only a temporary copy of
-the learning home. The host imports validated state and appended review events as one recoverable commit only when
-the live fingerprint is unchanged, so a concurrent learner review or CLI write wins instead of being overwritten.
-
-The mobile product has four areas: **Today**, **Curriculum**, **History**, and **My University**. Today opens directly
-on what to learn without a session-length setup. New learning teaches the Tutor's four-why explanation and
-known-concept connection as the main reading flow; the different-case application stays in an optional
-disclosure below it. A due retrieval is a separate screen state:
-the reference is neither sent nor placed in the DOM until the learner submits an answer or explicitly gives up.
-Feedback locks the submitted answer, shows the saved weak point and targeted correction, then gives the exact next
-due time. Curriculum exposes observable capabilities, active/completed/locked stages, proof criteria, and cut-list
-reasons. History is paginated. My University contains learner-authored Editor artifacts and revisions, Roommate
-connections with analogy limits, and value-oriented agent progress without raw handoff logs.
-
-The shell plus sanitized current lesson/path/history/campus read models remain readable offline. Drafts and a bounded
-answer outbox live only in browser storage; canonical truth remains `state.json` and `reviews.jsonl`. Each answer has
-a stable request id and base interaction sequence. Reconnect sync returns the original receipt for a duplicate id,
-keeps stale attempts visible as conflicts, and removes a queued answer only after the server acknowledges the single
-canonical review event. API responses and hidden retrieval references are never service-worker cached. Shell updates
-wait for the learner to choose a safe reload instead of mixing old and new assets.
-
-Loopback needs no token by default. For an HTTPS/private-tunnel endpoint, use `--require-token` and set
-`BECOME_MOBILE_TOKEN`. Non-loopback plain HTTP is refused unless `--allow-insecure-http` explicitly acknowledges
-that Bearer authorization does not encrypt the token or learning data.
-
 ## Verify
 
 ```bash
-python3 -m py_compile become.py mobile.py
+python3 -m py_compile become.py
 python3 -m unittest -v
 ```
 
 The suite covers role success and invalid transitions, access denial, workflow dependencies, populated-state
-migration, source gating, memory timing, the local PWA, and a complete six-role journey.
+migration, source gating, memory timing, and a complete six-role journey.
 
 ## Structure
 
 ```text
 become.py       local execution and state engine
-mobile.py       isolated Codex runner, durable job queue, auth, and mobile API
-mobile/         installable four-area personal-university PWA
 AGENTS.md       Orchestrator contract
 agents/         five specialist contracts
 tests/          role, migration, and journey verification

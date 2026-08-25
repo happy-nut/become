@@ -222,8 +222,6 @@ class StorageTests(EngineTestCase):
         self.assertEqual(ignored.returncode, 0, ignored.stderr)
 
     def test_state_review_pair_recovers_after_process_exit_at_each_replace(self):
-        from mobile import state_revision
-
         self.init_profile()
         anchor = self.engine.knowledge_add(
             "이벤트 루프", "이미 아는 실행 기준", "concept", [], [], [], AT
@@ -241,7 +239,6 @@ class StorageTests(EngineTestCase):
         )
         before_state = self.store.state_path.read_bytes()
         before_reviews = self.store.reviews_path.read_bytes()
-        before_revision = state_revision(Store(self.home))
 
         for crash_name in ("reviews.jsonl", "state.json"):
             with self.subTest(crash_name=crash_name):
@@ -266,8 +263,7 @@ class StorageTests(EngineTestCase):
                 _, status = os.waitpid(child, 0)
                 self.assertEqual(os.waitstatus_to_exitcode(status), 77)
                 self.assertTrue(self.store.journal_path.exists())
-                recovered = Store(self.home)
-                self.assertEqual(state_revision(recovered), before_revision)
+                Store(self.home).load()
                 self.assertEqual(self.store.state_path.read_bytes(), before_state)
                 self.assertEqual(self.store.reviews_path.read_bytes(), before_reviews)
                 self.assertFalse(self.store.journal_path.exists())
@@ -626,8 +622,10 @@ class AdvisorCurriculumTests(EngineTestCase):
         self.assertEqual(profile["curriculum_history"][-1]["id"], curriculum["id"])
         self.assertIn("goal or focus changed", profile["curriculum_history"][-1]["invalidation_reason"])
         self.assertTrue(all(not entries for entries in profile["curriculum_interview"].values()))
-        self.assertFalse(
-            next(item for item in self.engine.knowledge() if item["id"] == knowledge["id"])["active"]
+        kept = next(item for item in self.engine.knowledge() if item["id"] == knowledge["id"])
+        self.assertTrue(kept["active"])
+        self.assertNotIn(
+            knowledge["id"], [item["id"] for item in self.engine.tutor_context()["knowledge"]]
         )
         self.assertEqual(
             self.engine.route("learn", AT + timedelta(days=2))["workflow"],
@@ -1240,11 +1238,11 @@ class TutorConnectionTests(EngineTestCase):
         self.assertEqual(new["weak_points"], ["권력 비대칭"])
         self.assertEqual(new["memory"]["review_count"], 0)
         self.assertEqual([item["id"] for item in self.engine.tutor_context()["knowledge"]], [new["id"]])
-        with self.assertRaisesRegex(ValueError, "current learning target"):
+        with self.assertRaisesRegex(ValueError, "exactly one related knowledge or curriculum baseline"):
             self.engine.teach(old["id"], why("옛 합의"), "현재 사회학 수준", AT)
         with self.assertRaisesRegex(ValueError, "current learning target"):
             self.engine.learning_goal_add(
-                "옛 합의 복습", "분산 합의를 설명한다", "예전 목표", "remedial", 5,
+                "옛 합의 실전", "분산 합의를 새 시스템에 적용한다", "새 학습 목표", "practical", 5,
                 old["id"], AT,
             )
         with self.assertRaisesRegex(ValueError, "current learning target"):
@@ -1779,7 +1777,154 @@ class RoommatePerspectiveTests(EngineTestCase):
             )
 
 
-class MobileRoutingTests(EngineTestCase):
+class MaintenanceAcrossSubjectsTests(EngineTestCase):
+    """전진은 한 전공, 유지는 모든 전공."""
+
+    def _taught_backend_item(self):
+        taught_at = AT - timedelta(days=10)
+        applied_at = AT - timedelta(days=9)
+        self.engine.advisor_init("백엔드 전문가", "중급", ["백프레셔"], 0.9, taught_at)
+        anchor = self.engine.knowledge_add(
+            "이벤트 루프", "이미 아는 실행 기준", "concept", [], [], [], taught_at
+        )
+        item = self.engine.knowledge_add(
+            "백프레셔", "생산 속도를 소비 속도에 맞춘다", "concept", [], [], [], taught_at
+        )
+        self.engine.knowledge_relate(item["id"], anchor["id"], taught_at)
+        self.engine.teach(item["id"], why("백프레셔"), "이벤트 루프와 연결", taught_at)
+        self.engine.review(
+            item["id"], "good", [], [], "complete", "어디에 적용할까?",
+            "입구에서 생산률을 제한한다", "설명과 다른 사례에 적용했다", applied_at,
+        )
+        return item, anchor
+
+    def test_switching_goals_keeps_old_subject_knowledge_due_and_reviewable(self):
+        item, _ = self._taught_backend_item()
+        self.engine.advisor_init(
+            "퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, AT - timedelta(days=8)
+        )
+        self.assertIn(item["id"], [entry["id"] for entry in self.engine.due(AT)])
+        self.assertEqual(
+            self.engine.route("review", AT)["workflow"], ["advisor", "tutor", "advisor"]
+        )
+        self.assertEqual(
+            self.engine.route("learn", AT)["workflow"],
+            ["advisor", "librarian", "tutor", "advisor"],
+        )
+        retrieved = self.engine.review(
+            item["id"], "good", [], [], "complete", "간격 뒤 다시 설명하세요",
+            "소비 속도보다 빠른 유입을 경계에서 제한한다", "자료 없이 독립 인출했다", AT,
+        )
+        self.assertEqual(retrieved["last_interaction"]["phase"], "retrieval")
+        self.assertEqual(retrieved["memory"]["review_count"], 1)
+        self.assertNotIn(
+            item["id"], [entry["id"] for entry in self.engine.tutor_context()["knowledge"]]
+        )
+
+    def test_returning_to_an_archived_goal_restores_focus_and_knowledge(self):
+        item, anchor = self._taught_backend_item()
+        self.engine.advisor_init("퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, AT)
+        profile = self.engine.advisor_init(
+            "백엔드 전문가", "", [], 0.9, AT + timedelta(minutes=1)
+        )
+        self.assertEqual(profile["focus"], ["백프레셔"])
+        context_ids = [entry["id"] for entry in self.engine.tutor_context()["knowledge"]]
+        self.assertIn(item["id"], context_ids)
+        self.assertIn(anchor["id"], context_ids)
+        self.assertTrue(all(entry["active"] for entry in self.engine.knowledge()))
+
+    def test_maintenance_teach_anchors_to_its_own_subject(self):
+        item, anchor = self._taught_backend_item()
+        switch_at = AT - timedelta(days=8)
+        self.engine.advisor_init("퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, switch_at)
+        for decision in ("destination", "baseline", "sequencing", "cut_list", "milestones"):
+            self.engine.advisor_interview(
+                decision, f"{decision} 질문?", f"{decision}에 대한 실제 답", switch_at
+            )
+        self.engine.advisor_curriculum(json.loads(json.dumps(CURRICULUM)), switch_at)
+        current = self.engine.knowledge_add(
+            "포지션 한도", "손실 한도로 크기를 정한다", "concept", [], [], [], switch_at
+        )
+        anchored = self.engine.teach(
+            current["id"], why("포지션 한도"), "bounded queue 구현과 연결", switch_at
+        )
+        self.assertEqual(
+            anchored["last_teaching"]["connection_basis"]["kind"], "curriculum_baseline"
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one related knowledge or curriculum baseline"):
+            self.engine.teach(item["id"], why("백프레셔"), "bounded queue 구현과 연결", AT)
+        maintained = self.engine.teach(item["id"], why("백프레셔"), "이벤트 루프와 연결", AT)
+        self.assertEqual(
+            maintained["last_teaching"]["connection_basis"],
+            {"kind": "knowledge", "id": anchor["id"]},
+        )
+
+    def test_remedial_goal_is_allowed_for_maintenance_knowledge(self):
+        item, _ = self._taught_backend_item()
+        self.engine.advisor_init(
+            "퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, AT - timedelta(days=8)
+        )
+        goal = self.engine.learning_goal_add(
+            "재학습: 백프레셔", "자료 없이 설명하고 새 사례에 적용한다",
+            "만기 인출에서 예상 기억률이 낮다", "remedial", 5, item["id"], AT,
+        )
+        self.assertEqual(goal["kind"], "remedial")
+        self.assertEqual(goal["knowledge_id"], item["id"])
+
+    def test_roommate_can_use_another_stored_subject_as_lens(self):
+        self._taught_backend_item()
+        self.engine.advisor_init("퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, AT)
+        route = self.engine.route("perspective", AT)
+        self.assertIn("백엔드 전문가", route["other_majors"])
+        perspective = self.engine.perspective_start(
+            "퀀트 투자", "포지션 사이징", "백엔드 전문가", "백프레셔의 유입 제한",
+            "포지션 한도는 백프레셔의 유입 제한과 어디까지 같은가?", AT,
+        )
+        self.assertEqual(perspective["outside_field"], "백엔드 전문가")
+
+    def test_recall_surfaces_related_due_knowledge_with_a_casual_prompt(self):
+        item, _ = self._taught_backend_item()
+        self.engine.advisor_init(
+            "퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, AT - timedelta(days=8)
+        )
+        related = self.engine.recall_candidates("주문 유입 백프레셔 제어", AT)
+        self.assertEqual([entry["id"] for entry in related], [item["id"]])
+        self.assertIn("저번에 배운", related[0]["prompt"])
+        self.assertEqual(self.engine.recall_candidates("마케팅 퍼널 전환율", AT), [])
+
+    def test_review_intent_requires_a_due_retrieval(self):
+        self.init_profile()
+        route = self.engine.route("review", AT)
+        self.assertEqual(route["workflow"], [])
+        with self.assertRaisesRegex(ValueError, "no due retrieval"):
+            self.engine.workflow_start("review", "지금 복습", AT)
+
+    def test_review_workflow_targets_the_due_item(self):
+        item, _ = self._taught_backend_item()
+        self.engine.advisor_init(
+            "퀀트 투자 연구자", "입문", ["포지션 사이징"], 0.9, AT - timedelta(days=8)
+        )
+        workflow = self.engine.workflow_start("review", "저번 것 이어서 복습", AT)
+        tutor_step = workflow["steps"][1]
+        self.assertEqual(tutor_step["output_kind"], "retrieval_knowledge")
+        self.assertEqual(tutor_step["expected_resource_ids"], [item["id"]])
+
+    def test_previously_deactivated_bound_knowledge_is_restored_on_load(self):
+        self._taught_backend_item()
+        raw = json.loads(self.store.state_path.read_text(encoding="utf-8"))
+        bound, legacy = raw["knowledge"]
+        bound["active"] = False
+        legacy["active"] = False
+        del legacy["subject_binding"]
+        self.store.state_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        loaded = self.store.load()
+        restored = {item["id"]: item for item in loaded["knowledge"]}
+        self.assertTrue(restored[bound["id"]]["active"])
+        self.assertFalse(restored[legacy["id"]]["active"])
+        self.assertTrue(restored[legacy["id"]]["migration_import_required"])
+
+
+class RoutingTests(EngineTestCase):
     def test_ready_learning_state_routes_directly_to_tutor(self):
         self.assertEqual(self.engine.route("learn", AT)["role"], "advisor")
         self.init_profile()
@@ -1802,7 +1947,7 @@ class OrchestratorWorkflowTests(EngineTestCase):
         )
         prepare_retrieval(self.engine, knowledge)
         later = AT + timedelta(days=2)
-        workflow = self.engine.workflow_start("learn", "만기 복습", later)
+        workflow = self.engine.workflow_start("review", "만기 복습", later)
         handoff = self.engine.workflow_next(workflow["id"], "복습 목표", later)["handoff"]
         self.engine.handoff_claim(handoff["id"], "advisor", later)
         practical = self.engine.learning_goal_add(
@@ -1939,7 +2084,7 @@ class OrchestratorWorkflowTests(EngineTestCase):
         )
         prepare_retrieval(self.engine, knowledge)
         later = AT + timedelta(days=2)
-        workflow = self.engine.workflow_start("learn", "지연 인출", later)
+        workflow = self.engine.workflow_start("review", "지연 인출", later)
         advisor = self.engine.workflow_next(workflow["id"], "복습 목표", later)["handoff"]
         self.engine.handoff_claim(advisor["id"], "advisor", later)
         goal = self.engine.learning_goal_add(
@@ -2292,7 +2437,7 @@ class OrchestratorWorkflowTests(EngineTestCase):
                 [future_materials[0]["id"]], AT,
             )
 
-    def test_completed_path_replans_but_due_retrieval_still_runs_first(self):
+    def test_completed_path_replans_and_explicit_review_still_runs(self):
         curriculum = self.init_curriculum()
         materials, _ = self.ready_shelf()
         knowledge = self.engine.knowledge_add(
@@ -2325,9 +2470,9 @@ class OrchestratorWorkflowTests(EngineTestCase):
         self.assertEqual(material_workflow["steps"][0]["output_kind"], "curriculum")
 
         later = AT + timedelta(days=2)
-        learn_route = self.engine.route("learn", later)
-        self.assertEqual(learn_route["workflow"], ["advisor", "tutor", "advisor"])
-        retrieval = self.engine.workflow_start("learn", "기억 복원", later)
+        review_route = self.engine.route("review", later)
+        self.assertEqual(review_route["workflow"], ["advisor", "tutor", "advisor"])
+        retrieval = self.engine.workflow_start("review", "기억 복원", later)
         tutor_step = retrieval["steps"][1]
         self.assertEqual(tutor_step["output_kind"], "retrieval_knowledge")
         self.assertEqual(tutor_step["expected_resource_ids"], [knowledge["id"]])
@@ -2349,7 +2494,7 @@ class OrchestratorWorkflowTests(EngineTestCase):
             "프랑스 시 암송", "시를 외운다", "무관한 목표", "practical", 1,
             None, later,
         )
-        workflow = self.engine.workflow_start("learn", "만기 복습", later)
+        workflow = self.engine.workflow_start("review", "만기 복습", later)
         first = self.engine.workflow_next(workflow["id"], "복습 목표", later)["handoff"]
         self.engine.handoff_claim(first["id"], "advisor", later)
         with self.assertRaisesRegex(ValueError, "not produced by this claimed handoff"):
@@ -2424,7 +2569,7 @@ class OrchestratorWorkflowTests(EngineTestCase):
         )
 
         later = AT + timedelta(days=2)
-        retrieval = self.engine.workflow_start("learn", "지연 인출", later)
+        retrieval = self.engine.workflow_start("review", "지연 인출", later)
         advisor = self.engine.workflow_next(retrieval["id"], "복습 목표", later)["handoff"]
         self.engine.handoff_claim(advisor["id"], "advisor", later)
         goal = self.engine.learning_goal_add(
@@ -2464,7 +2609,7 @@ class OrchestratorWorkflowTests(EngineTestCase):
         )
         prepare_retrieval(self.engine, knowledge)
         later = AT + timedelta(days=2)
-        workflow = self.engine.workflow_start("learn", "만기 복습", later)
+        workflow = self.engine.workflow_start("review", "만기 복습", later)
         advisor = self.engine.workflow_next(workflow["id"], "복습 목표", later)["handoff"]
         self.engine.handoff_claim(advisor["id"], "advisor", later)
         goal = self.engine.learning_goal_add(
@@ -3067,7 +3212,7 @@ class AuthorizationTests(CliTestCase):
         )
         prepare_retrieval(self.engine, knowledge)
         later = AT + timedelta(days=2)
-        workflow = self.engine.workflow_start("learn", "만기 복습", later)
+        workflow = self.engine.workflow_start("review", "만기 복습", later)
         advisor = self.engine.workflow_next(workflow["id"], "보강 목표", later)["handoff"]
         self.engine.handoff_claim(advisor["id"], "advisor", later)
         goal = self.engine.learning_goal_add(

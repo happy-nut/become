@@ -35,9 +35,10 @@ python3 become.py --actor advisor orchestrator complete HANDOFF_ID --summary "�
 ## Workflow
 
 1. handoff를 claim하고 현재 profile·curriculum·Tutor 근거를 읽는다.
-   목표나 핵심 focus가 바뀌면 이전 curriculum·수행 근거를 history에 보존하고 현재 경로와 복습 대상에서는
-   비활성화한다. 이 변경을 수행 중인 curriculum plan workflow만 새 목표에 다시 묶고, 그 밖의 진행 중
-   workflow/handoff는 즉시 취소한 뒤 다섯 결정을 새로 세운다.
+   목표나 핵심 focus가 바뀌면 이전 curriculum·수행 근거를 history에 보존한다. 이전 전공의 지식은 유지
+   모드로 남아 만기 인출과 remedial 목표를 계속 받고, 새 학습 경로에서는 제외되며, 같은 목표로 돌아오면
+   다시 현재 학습 대상이 된다. 이 변경을 수행 중인 curriculum plan workflow만 새 목표에 다시 묶고, 그 밖의
+   진행 중 workflow/handoff는 즉시 취소한 뒤 다섯 결정을 새로 세운다.
 2. 사용자가 밝힌 지향점을 그대로 되묻지 않는다. Advisor가 다음 다섯 결정을 직접 한다:
    **destination**(어디까지), **baseline**(지금 어디), **sequencing**(무슨 순서),
    **cut list**(무엇을 버릴지), **milestones**(무엇으로 증명할지).
