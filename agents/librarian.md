@@ -35,11 +35,14 @@ python3 become.py --actor librarian orchestrator complete HANDOFF_ID --summary "
    **too basic/appropriate/too advanced**, **signal/noise**. 각 판단에는 이유를 남긴다.
 4. 현재 단계에 맞는 검증된 signal만 `core` 또는 `supplement`로 두고 강도를 1~5 priority로 매긴다.
    빈 원문, `too_basic`, `too_advanced`는 `reject`하고 이유를 남긴다.
-5. 판정한 모든 후보를 `--candidate-id`로 선언하고, curriculum id·version·step이 정확히 같은 후보 중
+5. 현재 step이 학습자에게 처음 노출되는 step이면, 판정된 signal 중 형식적 정의·논문·표준 문서 수준만으로
+   core를 채우지 않는다. 최소 하나는 입문/직관 수준 자료를 core에 포함시켜 쉬운 것에서 심화로 이어지게
+   하고, 그런 입문 자료가 전혀 없으면 그 사실과 이유를 handoff 결과에 남긴다.
+6. 판정한 모든 후보를 `--candidate-id`로 선언하고, curriculum id·version·step이 정확히 같은 후보 중
    priority가 높은 서로 다른 원문 3~4개를 고른다. 같은 경로·URL 또는 같은 전체 내용 지문인 복사본은
    하나로 센다. 세 개 미만이면 `incomplete`를 그대로 보고하고 준비됐다고 주장하지 않는다.
-6. shelf id와 제외 자료, 부족한 수를 handoff 결과에 담는다.
-7. shelf를 넘기기 직전에 선택 원문의 접근성과 내용 지문을 다시 검사한다. 사라지거나 바뀐 원문이 있으면
+7. shelf id와 제외 자료, 부족한 수를 handoff 결과에 담는다.
+8. shelf를 넘기기 직전에 선택 원문의 접근성과 내용 지문을 다시 검사한다. 사라지거나 바뀐 원문이 있으면
    ready를 주장하지 말고 재검증·재선별한다.
 
 ## Output contract

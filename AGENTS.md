@@ -52,7 +52,10 @@ python3 become.py --actor orchestrator orchestrator workflow-next WORKFLOW_ID --
 4. workflow step은 직전 의존 handoff가 끝나기 전에는 claim할 수 없고, 역할 소유의 실제 resource id가
    없으면 완료할 수 없다.
 5. Tutor의 `observations`와 `recommendations`는 마지막 Advisor step에 전달해 경로를 갱신한다.
-6. 모든 필수 step이 완료된 뒤에만 통합 결과를 말한다.
+6. 완료된 Tutor handoff에 학습자의 실제 답을 채점한 review가 있으면, 다음 step을 dispatch하거나
+   workflow 완료를 보고하기 전에 그 판정과 교정 설명을 학습자에게 원문 그대로 먼저 보여준다. workflow
+   상태 요약이나 다음 단계 dispatch 문구로 대신하지 않는다.
+7. 모든 필수 step이 완료된 뒤에만 통합 결과를 말한다.
 
 호스트가 별도 에이전트 실행을 지원하지 않으면 한 컨텍스트에서 역할을 합쳐 흉내 내지 않는다.
 
@@ -111,6 +114,9 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   적용 수행을 진단 근거로 받아 경로를 갱신하며, 계획 수립을 위해 사용자에게 자기평가나 목표 세부사항을 묻지 않는다.
 - 도착점은 관찰 가능한 수행, baseline은 실제 증거나 명시된 관찰 전 초기 가설, 순서는 앞선 선수 관계,
   제외 항목은 이유와 재검토 조건, 각 step의 milestone은 Editor가 통과시킨 학습자 artifact로 정의한다.
+- 학습자가 아직 한 번도 통과하지 못한 step은 형식적 정의나 정량적 증명으로 시작하지 않는다. 가장 쉬운
+  직관적 판단 → 정확한 정의·경계 사례 → 정량적/구현 수준 근거 순으로 난이도가 오르는 하위 목표로
+  세분화하고, milestone의 pass_criteria도 그 순서를 따른다.
 - 현재 active step의 모든 milestone 증거가 있어야 다음 prerequisite-ready step이 열린다. 이전
   curriculum version의 artifact는 재사용하지 않는다.
 - 동일 spec 재제출은 version/history를 늘리지 않는다. 실제 수정 때도 증명 조건이 같은 완료 milestone은
@@ -131,6 +137,8 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   세 개 미만이면 Tutor를 열지 않는다. 판정한 모든 후보 id를 shelf 입력에 명시하며, 재검증에 실패한
   자료가 있으면 기존 shelf도 더는 ready가 아니다. 빈 원문과 `too_basic`·`too_advanced` 자료는
   core/supplement가 될 수 없다.
+- 현재 step이 학습자에게 처음 노출되는 step이면 형식적 정의·논문·표준 문서 수준만으로 core를 채우지
+  않는다. 최소 하나는 입문/직관 수준 자료를 core에 포함시키고, 그런 자료가 전혀 없으면 이유를 남긴다.
 - 같은 URL·경로나 같은 전체 내용 지문을 가진 복사본은 하나로 세고, shelf 사용 시 원문의 접근성과
   내용 지문을 다시 검사한다.
 
@@ -141,6 +149,8 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   것과 이어진다"며 인출을 흐름에 끼워 넣는다. 무관한 만기는 이 흐름에 강제로 넣지 않는다.
 - 새 학습의 중심은 온전한 설명 한 번이다. 질문은 설명을 대신하지 않으며, 설명 뒤 별개 사례 적용 하나로 제한한다.
 - 혼동을 정의·인과·조건·경계·순서·트레이드오프로 나눠 처음 어긋난 지점을 저장한다.
+- 개념을 설명할 때는 형식적 정의나 논문 수준 정의로 시작하지 않고, 먼저 직관적 비유나 쉬운 관찰로
+  납득시킨 뒤 심화한다.
 - 모든 설명은 `왜 쓰는가 → 왜 이렇게 되었는가 → 왜 이 결과가 나오는가 → 그래서 어디에 쓰는가`를
   빠짐없이 다룬다. 연결 기준은 현재 전공의 active related knowledge 하나 또는 Advisor가 확정한
   curriculum baseline 하나여야 하며, 단순 profile 수준·focus 문구는 아는 개념의 증거로 쓰지 않는다.

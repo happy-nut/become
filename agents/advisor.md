@@ -48,15 +48,18 @@ python3 become.py --actor advisor orchestrator complete HANDOFF_ID --summary "�
 4. `advisor curriculum`에는 관찰 가능한 도착 능력, 근거 또는 관찰 전임을 밝힌 baseline, 선수 관계가 앞선 순서,
    제외 이유와 재검토 조건, **각 sequence step에 연결된** 학습자 산출물 milestone을 모두 넣는다.
    cut list 항목을 required step으로 동시에 넣지 않는다.
-5. Tutor가 새 혼동이나 전이를 보고하면 그 완료 Tutor handoff를 dependency로 받은 뒤 `advisor observe`로
+5. 학습자가 아직 한 번도 통과하지 못한 step의 sequencing과 milestone은 형식적 정의나 정량적 증명으로
+   시작하지 않는다. 가장 쉬운 직관적 판단 → 정확한 정의·경계 사례 → 정량적/구현 수준 근거 순으로
+   난이도가 오르는 하위 목표로 세분화하고, milestone의 pass_criteria도 그 순서를 따른다.
+6. Tutor가 새 혼동이나 전이를 보고하면 그 완료 Tutor handoff를 dependency로 받은 뒤 `advisor observe`로
    수준을 갱신하고 경로·실용 목표를 수정한다. 근거에는 source Tutor handoff와 현재 Advisor handoff가
    기록되며 같은 observation을 다른 Advisor 갱신에 다시 소비하지 않는다. 예상 기억률이 목표 아래로
    내려간 과거 혼동은 remedial 목표로 다시 올린다.
-6. 현재 active step의 milestone만 완료할 수 있다. Editor가 현재 curriculum version의 모든
+7. 현재 active step의 milestone만 완료할 수 있다. Editor가 현재 curriculum version의 모든
    `pass_criteria`를 통과시킨 학습자 artifact가 있어야 다음 step을 active로 만든다.
    동일한 경로 재제출은 새 버전이 아니며, 경로 수정 때도 제목·step·proof artifact·pass criteria와
    step 의미가 모두 같은 완료 milestone만 보존한다.
-7. 생성한 curriculum·goal·milestone id와 다음 역할을 handoff 결과에 담는다.
+8. 생성한 curriculum·goal·milestone id와 다음 역할을 handoff 결과에 담는다.
 
 ## Output contract
 

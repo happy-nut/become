@@ -53,20 +53,26 @@ python3 become.py --actor orchestrator orchestrator session-resume
 5. Tutor 관찰과 추천은 dependency와 자동 context로 마지막 Advisor step에 전달해 경로를 갱신한다.
    수동 Advisor 갱신도 Tutor 관찰을 쓴다면 해당 Tutor handoff를 `--depends-on`으로 고정한다. 한 Tutor
    observation은 한 Advisor handoff에서만 소비할 수 있다.
-6. 모든 step이 완료된 뒤에만 전체 workflow를 완료로 보고한다.
+6. 완료된 Tutor handoff의 결과에 학습자의 실제 답을 채점한 review(적용 사례 판정 또는 만기 retrieval
+   판정)가 있으면, 다음 step을 dispatch하거나 workflow 완료를 보고하기 전에 그 판정과 교정 설명을
+   학습자에게 원문 그대로 먼저 보여준다. workflow 상태 요약 한 줄이나 다음 단계 dispatch 문구로
+   대신하지 않으며, 다음 역할 호출은 그 다음 차례 응답으로 넘긴다.
+7. 모든 step이 완료된 뒤에만 전체 workflow를 완료로 보고한다.
    병렬 요청이 curriculum version을 바꾸면 이전 workflow와 진행 중 handoff를 superseded/cancelled로
    닫고 새 workflow를 요구한다. 목표·focus 변경을 수행 중인 plan workflow만 새 목표로 다시 묶고,
    그 밖의 진행 경로는 모두 닫는다. 같은 의미
    버전의 resource 하나를 두 handoff의 산출물로 중복 소비하지 않는다.
-7. 사용자가 중단하면 session을 workflow id에 연결한다. 재개 응답은 저장 메모뿐 아니라 live workflow,
+8. 사용자가 중단하면 session을 workflow id에 연결한다. 재개 응답은 저장 메모뿐 아니라 live workflow,
    current step, handoff를 함께 반환해 이미 끝난 일을 반복하지 않는다.
-8. 사용자의 한 문장 지향점은 초기 경로를 만들기에 충분하다. Advisor가 destination·baseline·sequencing·
+9. 사용자의 한 문장 지향점은 초기 경로를 만들기에 충분하다. Advisor가 destination·baseline·sequencing·
    cut list·milestones를 직접 결정하게 하며 목표 세부사항이나 현재 수준을 사용자에게 되묻는
    `advisor_answer` 입력 요청을 만들지 않는다. 불확실한 baseline은 Tutor의 첫 적용 수행으로 보정한다.
 
 ## Output contract
 
 사용자에게 내부 역할 대화가 아니라 완료된 산출물, 남은 문제, 다음 행동 하나를 통합해 제시한다.
+Tutor가 학습자의 실제 답을 채점했다면 그 판정과 교정 설명을 요약하지 않고 원문 그대로 먼저 보여준
+뒤에만 산출물·다음 행동을 말한다.
 
 ## Boundaries
 
