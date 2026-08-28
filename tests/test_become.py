@@ -4,6 +4,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -1018,6 +1020,128 @@ class LibrarianCurationTests(EngineTestCase):
         source.write_text("changed after verification", encoding="utf-8")
         self.assertEqual(self.engine.route("learn", AT)["role"], "librarian")
         source.unlink()
+        self.assertEqual(self.engine.route("learn", AT)["role"], "librarian")
+
+
+class SourceProbeTests(EngineTestCase):
+    def test_unchanged_local_source_is_revalidated_without_rereading_it(self):
+        source = Path(self.temporary.name) / "paper.txt"
+        source.write_text("primary source", encoding="utf-8")
+        observation, probe = Engine.read_source(str(source))
+        self.assertTrue(observation[0])
+        self.assertEqual(probe["kind"], "file")
+        unchanged, repeated = Engine.read_source(str(source), validators=probe)
+        self.assertIsNone(unchanged)
+        self.assertEqual(repeated, probe)
+        source.write_text("changed after verification", encoding="utf-8")
+        changed, changed_probe = Engine.read_source(str(source), validators=probe)
+        self.assertIsNotNone(changed)
+        self.assertNotEqual(changed[3], observation[3])
+        self.assertNotEqual(changed_probe, probe)
+
+    def test_a_moved_source_is_reread_instead_of_reusing_another_paths_probe(self):
+        first = Path(self.temporary.name) / "first.txt"
+        second = Path(self.temporary.name) / "second.txt"
+        first.write_text("shared bytes", encoding="utf-8")
+        second.write_text("shared bytes", encoding="utf-8")
+        _, probe = Engine.read_source(str(first))
+        observation, _ = Engine.read_source(str(second), validators=probe)
+        self.assertIsNotNone(observation)
+        self.assertEqual(observation[2], str(second.resolve()))
+
+    def test_probe_cache_crosses_engines_and_drops_unreachable_sources(self):
+        source = Path(self.temporary.name) / "paper.txt"
+        source.write_text("primary source", encoding="utf-8")
+        first = self.engine.sources.inspect(str(source))
+        cache_path = self.home / ".sources.json"
+        self.assertTrue(cache_path.is_file())
+        self.assertEqual(Engine(Store(self.home)).sources.inspect(str(source)), first)
+        source.unlink()
+        self.assertFalse(self.engine.sources.inspect(str(source))[0])
+        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        self.assertNotIn(str(source), cached["entries"])
+
+    def test_inspect_many_answers_every_distinct_source_once(self):
+        sources = []
+        for index in range(3):
+            source = Path(self.temporary.name) / f"batch-{index}.txt"
+            source.write_text(f"batch {index}", encoding="utf-8")
+            sources.append(str(source))
+        observed = self.engine.sources.inspect_many(sources + [sources[0]])
+        self.assertEqual(set(observed), set(sources))
+        self.assertTrue(all(item[0] for item in observed.values()))
+
+    def test_http_source_is_revalidated_with_a_conditional_request(self):
+        url = "http://example.test/paper"
+        probe = {"kind": "http", "identity": url, "etag": '"v1"', "last_modified": ""}
+        sent = {}
+
+        def not_modified(request, timeout=None):
+            sent["if_none_match"] = request.get_header("If-none-match")
+            raise urllib.error.HTTPError(request.full_url, 304, "Not Modified", {}, None)
+
+        with mock.patch("urllib.request.urlopen", not_modified):
+            observation, returned = Engine.read_source(url, validators=probe)
+        self.assertIsNone(observation)
+        self.assertEqual(returned, probe)
+        self.assertEqual(sent["if_none_match"], '"v1"')
+
+    def test_http_source_that_changed_is_read_again_with_a_new_probe(self):
+        url = "http://example.test/paper"
+        probe = {"kind": "http", "identity": url, "etag": '"v1"', "last_modified": ""}
+
+        class Response:
+            status = 200
+            headers = {"ETag": '"v2"'}
+
+            def __init__(self):
+                self.chunks = [b"remote primary source", b""]
+
+            def read(self, size):
+                return self.chunks.pop(0)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *details):
+                return False
+
+        with mock.patch("urllib.request.urlopen", lambda request, timeout=None: Response()):
+            observation, returned = Engine.read_source(url, validators=probe)
+        self.assertTrue(observation[0])
+        self.assertEqual(observation[1], "HTTP 200")
+        self.assertEqual(returned["etag"], '"v2"')
+
+    def test_a_failing_http_source_stays_unreachable(self):
+        url = "http://example.test/paper"
+
+        def gone(request, timeout=None):
+            raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+        with mock.patch("urllib.request.urlopen", gone):
+            observation, probe = Engine.read_source(url, validators={"kind": "http", "etag": '"v1"'})
+        self.assertFalse(observation[0])
+        self.assertIn("404", observation[1])
+        self.assertEqual(probe, {})
+
+    def test_a_shelf_the_stored_state_already_rejects_costs_no_source_read(self):
+        self.init_curriculum()
+        materials, shelf = self.ready_shelf()
+        self.assertEqual(shelf["status"], "ready")
+        # Re-registering a source resets its triage, so the shelf is stale on
+        # stored state alone and its sources are not worth reading.
+        self.engine.material_add(
+            materials[0]["title"], materials[0]["source"], "", "원문 다시 확인", AT
+        )
+
+        class Refused:
+            def inspect_many(self, sources):
+                raise AssertionError("stored state already rejects this shelf")
+
+            def inspect(self, source):
+                raise AssertionError("stored state already rejects this shelf")
+
+        self.engine.sources = Refused()
         self.assertEqual(self.engine.route("learn", AT)["role"], "librarian")
 
 
@@ -2933,6 +3057,30 @@ class LimitationClosureTests(EngineTestCase):
             ], capture_output=True, text=True,
         )
         self.assertIn("never writes state", recommend.stdout)
+
+
+class SourcePrefetchTests(CliTestCase):
+    def test_prefetch_needs_no_claimed_handoff_and_names_unreachable_sources(self):
+        source = Path(self.temporary.name) / "paper.txt"
+        source.write_text("primary source", encoding="utf-8")
+        missing = Path(self.temporary.name) / "missing.txt"
+        result = self.cli(
+            "librarian", "prefetch", "--source", str(source), "--source", str(missing)
+        )
+        self.assertEqual(result["inspected"], 2)
+        self.assertEqual(result["reachable"], [str(source)])
+        self.assertEqual([item["source"] for item in result["unreachable"]], [str(missing)])
+        self.assertIn("not found", result["unreachable"][0]["check"])
+
+    def test_prefetch_warms_the_probe_used_by_a_later_add(self):
+        source = Path(self.temporary.name) / "paper.txt"
+        source.write_text("primary source", encoding="utf-8")
+        self.cli("librarian", "prefetch", "--source", str(source))
+        cached = json.loads((self.home / ".sources.json").read_text(encoding="utf-8"))
+        fingerprint = cached["entries"][str(source)]["content_fingerprint"]
+        material = self.engine.material_add("논문", str(source), "", "원문 직접 확인", AT)
+        self.assertTrue(material["verified"])
+        self.assertEqual(material["verification"]["content_fingerprint"], fingerprint)
 
 
 class RoleContractTests(unittest.TestCase):

@@ -114,6 +114,7 @@ python3 become.py --actor advisor advisor next       # write path; needs a claim
 python3 become.py --actor librarian librarian add --title "official guide" --source "/path/to/source" --evidence "sections read directly"
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{...}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
+python3 become.py --actor librarian librarian prefetch --source "/path/to/source"  # read-only warm-up, no claim needed
 python3 become.py --actor tutor tutor recall --topic "topic being taught"  # related due knowledge to weave in
 python3 become.py --actor tutor tutor teach KNOWLEDGE_ID --explanation "왜 쓰는가: ... 왜 이렇게 되었는가: ... 왜 이 결과가 나오는가: ... 그래서 어디에 쓰는가: ..." --connection "stored related knowledge or curriculum baseline"
 python3 become.py --actor tutor tutor review KNOWLEDGE_ID good --confidence complete --prompt "question" --answer "learner answer" --rationale "rating basis"
