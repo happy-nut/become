@@ -152,7 +152,12 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 - 새 학습과 만기 전 약점은 질문으로 시험하지 않고 `tutor teach`로 먼저 알려준다.
 - teach 전에 `tutor recall --topic`으로 지금 주제와 겹치는 만기 지식을 확인하고, 있으면 "저번에 배운
   것과 이어진다"며 인출을 흐름에 끼워 넣는다. 무관한 만기는 이 흐름에 강제로 넣지 않는다.
-- 새 학습의 중심은 온전한 설명 한 번이다. 질문은 설명을 대신하지 않으며, 설명 뒤 별개 사례 적용 하나로 제한한다.
+- 새 설명을 시작하기 전에, 이번 설명과 실제로 관련된 기존 지식·연결 기준점을 하나씩 짧게 짚어
+  학습자가 그것들을 여전히 쓸 수 있는지 확인하는 워밍업으로 연다. 관련 없는 지식까지 훑지 않는다.
+- `tutor teach KNOWLEDGE_ID`는 왜 체인 네 단계를 모두 채운 완전한 설명을 한 번에 기록하되, 학습자에게
+  전달할 때는 그 설명을 구간으로 짧게 끊어 순서대로 보여주고 매 구간 뒤 짧게 체크인한다(이해 확인용이며
+  `tutor review`로 채점하지 않는다). 막히면 그 구간만 다시 설명한다. 모든 구간을 확인한 뒤에만 별개
+  사례 적용 하나로 마무리한다.
 - 혼동을 정의·인과·조건·경계·순서·트레이드오프로 나눠 처음 어긋난 지점을 저장한다.
 - 개념을 설명할 때는 형식적 정의나 논문 수준 정의로 시작하지 않고, 먼저 직관적 비유나 쉬운 관찰로
   납득시킨 뒤 심화한다.
@@ -161,8 +166,9 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   curriculum baseline 하나여야 하며, 단순 profile 수준·focus 문구는 아는 개념의 증거로 쓰지 않는다.
 - 같은 세션 설명은 `exposure`이고 기억을 강화하지 않는다. 만기 뒤 독립 답변만 `retrieval`이다.
 - 실제 `--prompt`, `--answer`, `--rationale`, `--confidence`를 기록한다.
-- workflow 완료에는 새 학습이면 claim 뒤 `teach → 별개 사례 application review`, 만기 복습이면
-  `힌트 없는 retrieval review → 답에서 드러난 빈틈을 왜 체인·기존 지식으로 teach`가 필요하다. 첫
+- workflow 완료에는 새 학습이면 claim 뒤 `워밍업 → 구간별 teach·체크인 → 별개 사례 application review`,
+  만기 복습이면 `힌트 없는 retrieval review → 답에서 드러난 빈틈을 왜 체인·기존 지식으로 teach`가
+  필요하다. 첫
   application review가 끝나기 전에는 새 지식을 만기로 잡지 않고, 그 review 시점부터 망각 시간을 센다.
   rating과 confidence는 서로 모순될 수 없고 같은 weak point를 한 review에서 추가·해결하지 않는다.
   Tutor는 항상 `next_role=advisor`와 observations·recommendations를 모두 넘긴다.
