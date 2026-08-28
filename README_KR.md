@@ -110,6 +110,7 @@ python3 become.py --actor advisor advisor next       # 쓰기: claim된 handoff�
 python3 become.py --actor librarian librarian add --title "공식 문서" --source "/path/to/source" --evidence "직접 읽은 범위"
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{...}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
+python3 become.py --actor librarian librarian prefetch --source "/path/to/source"  # 읽기 전용 사전 확인, claim 불필요
 python3 become.py --actor tutor tutor recall --topic "지금 가르치는 주제"  # 흐름에 끼워 넣을 관련 만기 지식
 python3 become.py --actor tutor tutor teach KNOWLEDGE_ID --explanation "왜 쓰는가: ... 왜 이렇게 되었는가: ... 왜 이 결과가 나오는가: ... 그래서 어디에 쓰는가: ..." --connection "저장된 related 지식 또는 curriculum baseline"
 python3 become.py --actor tutor tutor review KNOWLEDGE_ID good --confidence complete --prompt "질문" --answer "학습자 원답" --rationale "판정 근거"

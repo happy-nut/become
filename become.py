@@ -19,6 +19,7 @@ import unicodedata
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1236,9 +1237,123 @@ class Store:
             self._replace_bytes(self.reviews_path, raw)
 
 
+class SourceInspector:
+    """Re-check curated sources without re-reading bytes a probe proves unchanged.
+
+    The stored probe is never evidence on its own: every inspection still touches
+    the live source, and any probe that cannot prove the source is unchanged falls
+    back to the full read that produced the stored fingerprint. Losing the file
+    only costs one more read, so it stays outside the state journal.
+    """
+
+    VERSION = 1
+    LIMIT = 512
+    FIELDS = ("reachable", "check", "source_identity", "content_fingerprint", "probe", "checked_at")
+
+    def __init__(self, home: Path, timeout: float = 5.0, workers: int = 8):
+        self.path = home / ".sources.json"
+        self.timeout = timeout
+        self.workers = max(1, workers)
+
+    def _load(self) -> dict:
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(raw, dict) or raw.get("version") != self.VERSION:
+            return {}
+        entries = raw.get("entries")
+        if not isinstance(entries, dict):
+            return {}
+        return {
+            source: entry
+            for source, entry in entries.items()
+            if isinstance(source, str)
+            and isinstance(entry, dict)
+            and set(self.FIELDS) <= set(entry)
+            and entry["reachable"] is True
+            and isinstance(entry["probe"], dict)
+        }
+
+    def _save(self, entries: dict) -> None:
+        keep = sorted(entries.items(), key=lambda item: item[1]["checked_at"])[-self.LIMIT:]
+        payload = json.dumps(
+            {"version": self.VERSION, "entries": dict(keep)}, ensure_ascii=False, sort_keys=True
+        )
+        temporary = None
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle, temporary = tempfile.mkstemp(
+                prefix=".sources-", suffix=".tmp", dir=self.path.parent
+            )
+            with os.fdopen(handle, "w", encoding="utf-8") as target:
+                target.write(payload)
+            os.replace(temporary, self.path)
+            temporary = None
+        except OSError:
+            pass  # a probe cache that cannot be written only costs the next read
+        finally:
+            if temporary and os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def inspect(self, source: str) -> tuple[bool, str, str, str]:
+        return self.inspect_many([source])[source]
+
+    def inspect_many(self, sources: list[str]) -> dict[str, tuple[bool, str, str, str]]:
+        """Inspect every distinct source once, concurrently, and keep the probes."""
+        targets = list(dict.fromkeys(sources))
+        if not targets:
+            return {}
+        entries = self._load()
+        if len(targets) == 1:
+            observed = [self._inspect_one(targets[0], entries.get(targets[0]))]
+        else:
+            with ThreadPoolExecutor(max_workers=min(self.workers, len(targets))) as pool:
+                observed = list(
+                    pool.map(
+                        lambda source: self._inspect_one(source, entries.get(source)), targets
+                    )
+                )
+        results: dict[str, tuple[bool, str, str, str]] = {}
+        checked_at = iso(now_utc())
+        changed = False
+        for source, (observation, probe) in zip(targets, observed):
+            results[source] = observation
+            if observation[0] and probe:
+                entries[source] = {
+                    "reachable": True,
+                    "check": observation[1],
+                    "source_identity": observation[2],
+                    "content_fingerprint": observation[3],
+                    "probe": probe,
+                    "checked_at": checked_at,
+                }
+                changed = True
+            elif source in entries:
+                del entries[source]
+                changed = True
+        if changed:
+            self._save(entries)
+        return results
+
+    def _inspect_one(
+        self, source: str, entry: dict | None
+    ) -> tuple[tuple[bool, str, str, str], dict]:
+        observation, probe = Engine.read_source(
+            source, self.timeout, entry["probe"] if entry else None
+        )
+        if observation is None:
+            return (
+                (True, entry["check"], entry["source_identity"], entry["content_fingerprint"]),
+                probe,
+            )
+        return observation, probe
+
+
 class Engine:
     def __init__(self, store: Store):
         self.store = store
+        self.sources = SourceInspector(store.home)
         self.write_scope: str | None = None
 
     def _producer(self, state: dict, role: str) -> str | None:
@@ -2348,37 +2463,80 @@ class Engine:
 
     # Librarian
     @staticmethod
-    def inspect_source(source: str, timeout: float = 5.0) -> tuple[bool, str, str, str]:
+    def read_source(
+        source: str, timeout: float = 5.0, validators: dict | None = None
+    ) -> tuple[tuple[bool, str, str, str] | None, dict]:
+        """Read a source and return its observation plus a probe for the next read.
+
+        The observation is ``None`` when ``validators`` recorded by an earlier read
+        prove the source has not changed since then, so a repeat check keeps the
+        stored fingerprint instead of paying for the same bytes again.
+        """
         parsed = urlparse(source)
         identity = parsed._replace(fragment="").geturl() if parsed.scheme else ""
+        known = validators if isinstance(validators, dict) else {}
         try:
             if parsed.scheme in {"http", "https"}:
+                current = (
+                    known
+                    if known.get("kind") == "http" and known.get("identity") == identity
+                    else {}
+                )
                 request = urllib.request.Request(source, headers={"User-Agent": "become/2"})
-                with urllib.request.urlopen(request, timeout=timeout) as response:
-                    digest = hashlib.sha256()
-                    has_content = False
-                    for chunk in iter(lambda: response.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                        has_content = has_content or bool(chunk.strip())
-                    reachable = 200 <= response.status < 400 and has_content
-                    return (
-                        reachable,
-                        f"HTTP {response.status}"
-                        if has_content
-                        else "HTTP response has no content",
-                        identity,
-                        digest.hexdigest() if has_content else "",
-                    )
+                if current.get("etag"):
+                    request.add_header("If-None-Match", current["etag"])
+                if current.get("last_modified"):
+                    request.add_header("If-Modified-Since", current["last_modified"])
+                try:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        digest = hashlib.sha256()
+                        has_content = False
+                        for chunk in iter(lambda: response.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                            has_content = has_content or bool(chunk.strip())
+                        reachable = 200 <= response.status < 400 and has_content
+                        probe = {
+                            "kind": "http",
+                            "identity": identity,
+                            "etag": response.headers.get("ETag", ""),
+                            "last_modified": response.headers.get("Last-Modified", ""),
+                        }
+                        return (
+                            (
+                                reachable,
+                                f"HTTP {response.status}"
+                                if has_content
+                                else "HTTP response has no content",
+                                identity,
+                                digest.hexdigest() if has_content else "",
+                            ),
+                            probe if reachable and (probe["etag"] or probe["last_modified"]) else {},
+                        )
+                except urllib.error.HTTPError as error:
+                    if error.code == 304 and current:
+                        return None, current
+                    raise
             if parsed.scheme == "file":
                 path = Path(unquote(parsed.path))
             elif not parsed.scheme:
                 path = Path(source).expanduser()
             else:
-                return False, f"unsupported source scheme: {parsed.scheme}", identity, ""
+                return (False, f"unsupported source scheme: {parsed.scheme}", identity, ""), {}
             resolved = path.resolve()
             identity = str(resolved)
             if not resolved.is_file():
-                return False, "local file not found", identity, ""
+                return (False, "local file not found", identity, ""), {}
+            status = resolved.stat()
+            probe = {
+                "kind": "file",
+                "identity": identity,
+                "mtime_ns": status.st_mtime_ns,
+                "size": status.st_size,
+            }
+            if known.get("kind") == "file" and all(
+                known.get(key) == probe[key] for key in ("identity", "mtime_ns", "size")
+            ):
+                return None, probe
             digest = hashlib.sha256()
             has_content = False
             with resolved.open("rb") as source_file:
@@ -2386,12 +2544,17 @@ class Engine:
                     digest.update(chunk)
                     has_content = has_content or bool(chunk.strip())
             return (
-                (True, str(resolved), identity, digest.hexdigest())
+                ((True, str(resolved), identity, digest.hexdigest()), probe)
                 if has_content
-                else (False, "local file has no content", identity, "")
+                else ((False, "local file has no content", identity, ""), {})
             )
         except (OSError, urllib.error.URLError, ValueError) as error:
-            return False, str(error), identity, ""
+            return (False, str(error), identity, ""), {}
+
+    @staticmethod
+    def inspect_source(source: str, timeout: float = 5.0) -> tuple[bool, str, str, str]:
+        observation, _ = Engine.read_source(source, timeout)
+        return observation
 
     @staticmethod
     def verify_source(source: str, timeout: float = 5.0) -> tuple[bool, str]:
@@ -2403,7 +2566,7 @@ class Engine:
     ) -> dict:
         if not title.strip() or not source.strip():
             raise ValueError("material title and source are required")
-        reachable, check, source_identity, content_fingerprint = self.inspect_source(source)
+        reachable, check, source_identity, content_fingerprint = self.sources.inspect(source)
         evidence = evidence.strip()
         state = self.store.load()
         existing = next((item for item in state["materials"] if item["source"] == source), None)
@@ -2459,9 +2622,8 @@ class Engine:
             None,
         )
 
-    @staticmethod
     def _shelf_is_ready(
-        state: dict, shelf: dict, curriculum: dict, step_id: str | None = None
+        self, state: dict, shelf: dict, curriculum: dict, step_id: str | None = None
     ) -> bool:
         if (
             shelf.get("status") != "ready"
@@ -2489,27 +2651,7 @@ class Engine:
             == shelf.get("step_id")
             for material_id in candidates
         )
-        selected_materials = [materials.get(material_id) for material_id in selected]
-        identities: set[str] = set()
-        fingerprints: set[str] = set()
-        selected_valid = True
-        for material in selected_materials:
-            if not material:
-                selected_valid = False
-                continue
-            reachable, _, identity, fingerprint = Engine.inspect_source(material["source"])
-            verification = material.get("verification", {})
-            if (
-                not reachable
-                or identity != verification.get("source_identity")
-                or fingerprint != verification.get("content_fingerprint")
-                or identity in identities
-                or fingerprint in fingerprints
-            ):
-                selected_valid = False
-            identities.add(identity)
-            fingerprints.add(fingerprint)
-        return candidates_valid and selected_valid and all(
+        recorded_valid = all(
             material_id in materials
             and materials[material_id].get("verified")
             and materials[material_id].get("curation", {}).get("curriculum_id")
@@ -2522,6 +2664,49 @@ class Engine:
             in {"core", "supplement"}
             for material_id in selected
         )
+        # Nothing stored justifies this shelf, so its sources are not worth reading.
+        if not candidates_valid or not recorded_valid:
+            return False
+        selected_materials = [materials[material_id] for material_id in selected]
+        observed = self.sources.inspect_many(
+            [material["source"] for material in selected_materials]
+        )
+        identities: set[str] = set()
+        fingerprints: set[str] = set()
+        for material in selected_materials:
+            reachable, _, identity, fingerprint = observed[material["source"]]
+            verification = material.get("verification", {})
+            if (
+                not reachable
+                or identity != verification.get("source_identity")
+                or fingerprint != verification.get("content_fingerprint")
+                or identity in identities
+                or fingerprint in fingerprints
+            ):
+                return False
+            identities.add(identity)
+            fingerprints.add(fingerprint)
+        return True
+
+    def source_prefetch(self, material_ids: list[str], sources: list[str]) -> dict:
+        """Warm the source probes ahead of curation so triage never waits on them."""
+        state = self.store.load()
+        targets = [
+            self._find(state["materials"], material_id, "prefetch material")["source"]
+            for material_id in unique(material_ids)
+        ] + unique(sources)
+        if not targets:
+            targets = [material["source"] for material in state["materials"]]
+        observed = self.sources.inspect_many(targets)
+        return {
+            "inspected": len(observed),
+            "reachable": sorted(source for source, item in observed.items() if item[0]),
+            "unreachable": [
+                {"source": source, "check": observed[source][1]}
+                for source in sorted(observed)
+                if not observed[source][0]
+            ],
+        }
 
     def material_curate(self, material_id: str, assessment: dict, at: datetime) -> dict:
         if not isinstance(assessment, dict):
@@ -4800,6 +4985,9 @@ def build_parser() -> argparse.ArgumentParser:
     shelf.add_argument("--curriculum-id", required=True)
     shelf.add_argument("--step-id", required=True)
     add_list_argument(shelf, "--candidate-id", "repeat for every triaged candidate")
+    prefetch = librarian_commands.add_parser("prefetch")
+    add_list_argument(prefetch, "--material-id", "repeat for every material to re-check")
+    add_list_argument(prefetch, "--source", "repeat for every source to check ahead of add")
     librarian_commands.add_parser("list")
 
     tutor = roles.add_parser("tutor")
@@ -4896,7 +5084,7 @@ def authorize(actor: str, role: str, command: str) -> None:
 def authorize_specialist_write(engine: Engine, args: argparse.Namespace) -> None:
     reads = {
         "advisor": {"goals", "status", "recommend"},
-        "librarian": {"list"},
+        "librarian": {"list", "prefetch"},
         "tutor": {"list", "context", "due"},
         "editor": {"show", "add", "revise"},
         "roommate": {"list"},
@@ -5079,6 +5267,8 @@ def run(args: argparse.Namespace) -> object:
             return engine.material_shelf(
                 args.curriculum_id, args.step_id, args.candidate_id, at
             )
+        if args.command == "prefetch":
+            return engine.source_prefetch(args.material_id, args.source)
         return engine.materials()
     if args.role == "tutor":
         if args.command == "add":

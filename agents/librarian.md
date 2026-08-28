@@ -23,13 +23,16 @@ python3 become.py --actor librarian orchestrator claim HANDOFF_ID
 python3 become.py --actor librarian librarian add --title "자료" --source "원문 위치" --note "용도" --evidence "직접 확인한 범위"
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{"curriculum_id":"CURRICULUM_ID","curriculum_version":1,"step_id":"STEP_ID","priority":5,"relevance":{"decision":"belongs","reason":"..."},"credibility":{"decision":"credible","reason":"..."},"level_fit":{"decision":"appropriate","reason":"..."},"signal":{"decision":"signal","reason":"..."},"disposition":"core","disposition_reason":"..."}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
+python3 become.py --actor librarian librarian prefetch --source "원문 위치" --material-id MATERIAL_ID
 python3 become.py --actor librarian librarian list
 python3 become.py --actor librarian orchestrator complete HANDOFF_ID --summary "결과" --resource-id SHELF_ID --next-role tutor
 ```
 
 ## Workflow
 
-1. handoff를 claim하고 현재 curriculum step의 outcome·baseline을 읽는다.
+1. handoff를 claim하고 현재 curriculum step의 outcome·baseline을 읽는다. 확인할 주소가 많으면
+   `librarian prefetch`를 먼저(필요하면 `&`로 백그라운드에) 돌려 원문 확인을 병렬로 끝내 둔다.
+   prefetch는 상태를 쓰지 않는 읽기 명령이라 claim 없이도 실행할 수 있다.
 2. 원문을 직접 열어 관련 범위까지 확인한다. 접근 성공만으로 verified라고 하지 않는다.
 3. 모든 자료를 네 축으로 판정한다: **belongs/does not belong**, **credible/not credible**,
    **too basic/appropriate/too advanced**, **signal/noise**. 각 판단에는 이유를 남긴다.
@@ -43,7 +46,9 @@ python3 become.py --actor librarian orchestrator complete HANDOFF_ID --summary "
    하나로 센다. 세 개 미만이면 `incomplete`를 그대로 보고하고 준비됐다고 주장하지 않는다.
 7. shelf id와 제외 자료, 부족한 수를 handoff 결과에 담는다.
 8. shelf를 넘기기 직전에 선택 원문의 접근성과 내용 지문을 다시 검사한다. 사라지거나 바뀐 원문이 있으면
-   ready를 주장하지 말고 재검증·재선별한다.
+   ready를 주장하지 말고 재검증·재선별한다. 재검사는 매번 원문을 처음부터 다시 읽지 않는다. 엔진이
+   로컬 파일은 경로·mtime·크기로, HTTP는 ETag·Last-Modified 조건부 요청으로 "안 바뀌었음"을
+   증명할 때만 지난 지문을 재사용하고, 증명하지 못하면 전문을 다시 읽는다.
 
 ## Output contract
 

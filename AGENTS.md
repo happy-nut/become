@@ -140,7 +140,12 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 - 현재 step이 학습자에게 처음 노출되는 step이면 형식적 정의·논문·표준 문서 수준만으로 core를 채우지
   않는다. 최소 하나는 입문/직관 수준 자료를 core에 포함시키고, 그런 자료가 전혀 없으면 이유를 남긴다.
 - 같은 URL·경로나 같은 전체 내용 지문을 가진 복사본은 하나로 세고, shelf 사용 시 원문의 접근성과
-  내용 지문을 다시 검사한다.
+  내용 지문을 다시 검사한다. 이 재검사는 원문을 처음부터 다시 읽는 것이 아니다. 엔진이 로컬 파일은
+  경로·mtime·크기, HTTP는 ETag·Last-Modified 조건부 요청으로 변하지 않았음을 증명할 때만 지난 지문을
+  재사용하고, 증명하지 못하면 전문을 다시 읽는다. 선택 원문은 한 번에 병렬로 확인하며, 저장된 상태만으로
+  이미 탈락한 shelf는 원문을 읽지 않는다.
+- 오래 걸리는 원문 확인은 `librarian prefetch`로 미리 끝내 둔다. 상태를 쓰지 않는 읽기 명령이라 claim
+  없이 실행할 수 있고, `&`로 백그라운드에 두고 판정을 이어가도 된다.
 
 ### Tutor
 
@@ -221,6 +226,7 @@ python3 become.py --actor advisor advisor next
 python3 become.py --actor librarian librarian add --title "자료" --source "원문" --evidence "직접 확인 범위"
 python3 become.py --actor librarian librarian curate MATERIAL_ID --assessment '{...}'
 python3 become.py --actor librarian librarian shelf --curriculum-id CURRICULUM_ID --step-id STEP_ID --candidate-id MATERIAL_1 --candidate-id MATERIAL_2 --candidate-id MATERIAL_3
+python3 become.py --actor librarian librarian prefetch --source "원문" --material-id MATERIAL_ID  # 읽기 전용, claim 불필요
 python3 become.py --actor tutor tutor context
 python3 become.py --actor tutor tutor recall --topic "지금 가르치는 주제"
 python3 become.py --actor tutor tutor relate KNOWLEDGE_ID RELATED_ID
@@ -254,6 +260,8 @@ python3 become.py --actor tutor orchestrator complete HANDOFF_ID --summary "결�
 개인 상태는 `.become/state.json`, 학습 감사 로그는 `.become/reviews.jsonl`에 저장된다. 모든 writer는 같은
 프로세스 간 잠금과 비교 후 저장을 사용하며, 두 파일을 함께 바꾸는 도중 중단되면 로컬 저널로 이전의
 일관된 쌍을 자동 복구한다.
+`.become/.sources.json`은 원문 재검사를 위한 probe 캐시일 뿐 증거가 아니다. 언제 지워도 되고, 지우면
+다음 재검사가 원문을 한 번 더 읽을 뿐이다.
 `.become/`은 Git에서 제외된다. `advisor recommend`는 읽기 전용이고, `advisor next`는 claim된 handoff에서
 목표를 쓰는 명령이다. 만기 인출은 무조건 앞세우지 않는다. Tutor가 `tutor recall --topic`으로 현재
 주제와 겹치는 만기 지식을 찾아 "저번에 배운 것"으로 자연스럽게 끼워 넣는 것이 기본이고, 명시적 복습은
