@@ -55,7 +55,11 @@ python3 become.py --actor tutor orchestrator complete HANDOFF_ID --summary "결�
      담아 최소 2~3문장 이상으로 채운다. 학습자가 스스로 막힌다고 밝힌 부분만 그 자리에서 다시 설명한다.
      전체 설명을 다 보여준 뒤에는 "적용해볼까요?" 같은 승인을 구하지 않고 바로 별개의 실제 사례를
      제시해 적용하게 하고 그 원답을 `tutor review`로 기록한다. 완료 순서는 반드시 워밍업 → teach →
-     application review다.
+     application review다. application 형식은 curriculum destination의 수행 유형을 따른다.
+     destination이 판단·설명 같은 지식 습득이면 러닝 함수 구현·복잡도 증명·경계 테스트 코드를 요구하지
+     않고, 이번 사례에 어떤 접근을 왜 선택하는지 말이나 의사코드 수준으로 판단하게 한다. destination이
+     실제 구현 능력일 때만 코드를 요구하며, 그때도 첫 application부터 구현+복잡도+경계 테스트를 한 번에
+     요구하지 않고 가장 쉬운 판단부터 순서대로 올린다.
    - **만기 후 retrieval:** 힌트와 설명 없이 질문부터 해 독립 인출을 확인하고, 답을 받은 뒤 반드시
      그 원답을 `tutor review`로 기록한 다음 부족한 원리와 연결을 `tutor teach`로 가르친다. 정답을 먼저
      teach한 뒤 retrieval인 것처럼 기록하거나, 질문·판정만 저장하고 설명 없이 완료하지 않는다.
