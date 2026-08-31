@@ -3198,6 +3198,16 @@ class AgentSpecTests(unittest.TestCase):
         self.assertNotIn("--actor learner", editor_allowed)
         self.assertIn("`--actor learner`를 자칭해서는 안 된다", specs["editor"])
 
+    def test_orchestrator_keeps_review_metadata_internal(self):
+        contracts = (
+            (ROOT / "AGENTS.md").read_text(encoding="utf-8"),
+            (ROOT / "agents" / "orchestrator.md").read_text(encoding="utf-8"),
+        )
+        for contract in contracts:
+            self.assertIn("rating·confidence·rationale", contract)
+            self.assertIn("내부", contract)
+            self.assertNotIn("원문 그대로 먼저 보여", contract)
+
 
 class AuthorizationTests(CliTestCase):
     def test_different_specialists_can_claim_work_in_parallel(self):

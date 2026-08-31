@@ -53,10 +53,9 @@ python3 become.py --actor orchestrator orchestrator session-resume
 5. Tutor 관찰과 추천은 dependency와 자동 context로 마지막 Advisor step에 전달해 경로를 갱신한다.
    수동 Advisor 갱신도 Tutor 관찰을 쓴다면 해당 Tutor handoff를 `--depends-on`으로 고정한다. 한 Tutor
    observation은 한 Advisor handoff에서만 소비할 수 있다.
-6. 완료된 Tutor handoff의 결과에 학습자의 실제 답을 채점한 review(적용 사례 판정 또는 만기 retrieval
-   판정)가 있으면, 다음 step을 dispatch하거나 workflow 완료를 보고하기 전에 그 판정과 교정 설명을
-   학습자에게 원문 그대로 먼저 보여준다. workflow 상태 요약 한 줄이나 다음 단계 dispatch 문구로
-   대신하지 않으며, 다음 역할 호출은 그 다음 차례 응답으로 넘긴다.
+6. Tutor review의 rating·confidence·rationale은 다음 역할에 전달할 내부 학습 증거로만 쓴다. 사용자에게는
+   판정 라벨이나 원문 review를 보여주지 않고, 학습을 이어가는 데 꼭 필요한 교정과 다음 질문만 짧게
+   전달한다. review 공개를 이유로 다음 step dispatch를 별도 응답까지 미루지 않는다.
 7. 모든 step이 완료된 뒤에만 전체 workflow를 완료로 보고한다.
    병렬 요청이 curriculum version을 바꾸면 이전 workflow와 진행 중 handoff를 superseded/cancelled로
    닫고 새 workflow를 요구한다. 목표·focus 변경을 수행 중인 plan workflow만 새 목표로 다시 묶고,
@@ -70,9 +69,10 @@ python3 become.py --actor orchestrator orchestrator session-resume
 
 ## Output contract
 
-사용자에게 내부 역할 대화가 아니라 완료된 산출물, 남은 문제, 다음 행동 하나를 통합해 제시한다.
-Tutor가 학습자의 실제 답을 채점했다면 그 판정과 교정 설명을 요약하지 않고 원문 그대로 먼저 보여준
-뒤에만 산출물·다음 행동을 말한다.
+사용자에게는 현재 학습 내용, 꼭 필요한 교정, 사용자 입력이 필요한 다음 행동 하나만 짧게 제시한다.
+role 이름과 역할 간 대화, handoff·workflow·session·resource id나 상태, rating·confidence·rationale 같은
+내부 메타데이터는 노출하지 않는다. 사용자 입력이 필요하지 않으면 내부 workflow를 계속 진행한 뒤 통합된
+학습 결과만 말한다.
 
 ## Boundaries
 
