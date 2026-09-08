@@ -1307,15 +1307,15 @@ class TutorConnectionTests(EngineTestCase):
         self.assertEqual(completed["status"], "completed")
 
     def test_tutor_contract_requires_confusion_why_chain_and_known_concepts(self):
-        text = (ROOT / "agents" / "tutor.md").read_text(encoding="utf-8")
+        text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for requirement in (
-            "혼동을 진단한다",
+            "정의·인과·조건·경계·순서·트레이드오프",
             "왜 쓰는가",
             "왜 이렇게 되었는가",
             "왜 이 결과가 나오는가",
             "커넥팅 더 닷",
-            "사용자가 아는 개념",
-            "어디서 비유가 깨지는지도",
+            "학습자가 안다고 확인되지 않은 개념",
+            "비유가 어디서 깨지는지도",
             "tutor context",
             "tutor relate",
         ):
@@ -1369,8 +1369,17 @@ class TutorConnectionTests(EngineTestCase):
                 "옛 합의 실전", "분산 합의를 새 시스템에 적용한다", "새 학습 목표", "practical", 5,
                 old["id"], AT,
             )
-        with self.assertRaisesRegex(ValueError, "current learning target"):
-            self.engine.knowledge_relate(old["id"], new["id"], AT)
+        # An explicit cross-subject relation is the sanctioned way to link a real shared
+        # principle, and it must not merge either side's memory or confusions.
+        self.engine.knowledge_relate(old["id"], new["id"], AT)
+        saved = {item["id"]: item for item in self.engine.knowledge()}
+        self.assertIn(new["id"], saved[old["id"]]["related"])
+        self.assertIn(old["id"], saved[new["id"]]["related"])
+        self.assertEqual(saved[old["id"]]["weak_points"], ["쿼럼"])
+        self.assertEqual(saved[new["id"]]["weak_points"], ["권력 비대칭"])
+        self.assertNotEqual(
+            saved[old["id"]]["subject_binding"], saved[new["id"]]["subject_binding"]
+        )
 
 
 class AdvisorTutorLoopTests(EngineTestCase):
@@ -1456,6 +1465,89 @@ class AdvisorTutorLoopTests(EngineTestCase):
         self.assertEqual(saved["confusion_history"][0]["point"], "교집합이 필요한 이유")
         self.assertEqual(advice["learning_goal"]["knowledge_id"], item["id"])
 
+    def test_teaching_prefers_real_knowledge_over_the_baseline_string(self):
+        self.init_curriculum()
+        baseline = self.store.load()["profile"]["curriculum"]["baseline"]
+        baseline["can_do"] = ["이벤트 루프의 준비 큐를 설명할 수 있다"]
+        state = self.store.load()
+        state["profile"]["curriculum"]["baseline"] = baseline
+        self.store.save(state)
+        peer = self.engine.knowledge_add(
+            "이벤트 루프", "준비 큐에서 하나씩 꺼내 실행한다", "concept", [], [], [], AT
+        )
+        item = self.engine.knowledge_add("백프레셔", "생산 속도를 제한한다.", "concept", [], [], [], AT)
+        self.engine.knowledge_relate(item["id"], peer["id"], AT)
+        # The wording matches both the peer knowledge and the baseline sentence.
+        taught = self.engine.teach(
+            item["id"], why("백프레셔"), "이벤트 루프의 준비 큐와 같은 원리", AT + timedelta(minutes=1)
+        )
+        self.assertEqual(
+            taught["last_teaching"]["connection_basis"], {"kind": "knowledge", "id": peer["id"]}
+        )
+
+    def test_teaching_records_the_verified_connection_as_a_graph_edge(self):
+        self.init_curriculum()
+        state = self.store.load()
+        state["profile"]["curriculum"]["baseline"]["can_do"] = [
+            "이벤트 루프의 준비 큐를 설명할 수 있다"
+        ]
+        self.store.save(state)
+        peer = self.engine.knowledge_add(
+            "이벤트 루프", "준비 큐에서 하나씩 꺼내 실행한다", "concept", [], [], [], AT
+        )
+        self.engine.teach(
+            peer["id"], why("이벤트 루프"), "이벤트 루프의 준비 큐를 설명할 수 있다",
+            AT + timedelta(minutes=1),
+        )
+        item = self.engine.knowledge_add(
+            "정족수", "과반수 교집합을 만든다", "concept", [], [], [], AT
+        )
+        self.assertEqual(item["related"], [])
+        # Never related before, but the explanation names the engaged peer verbatim.
+        self.engine.teach(
+            item["id"], why("정족수"), "이벤트 루프의 준비 큐와 같은 원리",
+            AT + timedelta(minutes=2),
+        )
+        saved = {value["id"]: value for value in self.engine.knowledge()}
+        self.assertIn(peer["id"], saved[item["id"]]["related"])
+        self.assertIn(item["id"], saved[peer["id"]]["related"])
+
+    def test_recall_refreshes_a_faded_anchor_instead_of_only_quizzing_due_items(self):
+        self.init_profile()
+        item = self.engine.knowledge_add(
+            "이벤트 루프", "준비 큐에서 하나씩 꺼내 실행한다", "concept", ["큐 순서"], [], [], AT
+        )
+        prepare_retrieval(self.engine, item)
+        # Just taught: still sharp, so it is only mentioned even though a weak point is
+        # open — the weak point travels in its own field for the Tutor to act on.
+        fresh = next(
+            entry
+            for entry in self.engine.recall_candidates(
+                "이벤트 루프의 준비 큐", AT + timedelta(minutes=5)
+            )
+            if entry["id"] == item["id"]
+        )
+        self.assertEqual(fresh["mode"], "mention")
+        self.assertEqual(fresh["weak_points"], ["큐 순서"])
+        # Faded but not yet due: refreshed kindly, never quizzed.
+        faded = next(
+            entry
+            for entry in self.engine.recall_candidates(
+                "이벤트 루프의 준비 큐", AT + timedelta(hours=12)
+            )
+            if entry["id"] == item["id"]
+        )
+        self.assertEqual(faded["mode"], "refresh")
+        self.assertIn("되짚어", faded["prompt"])
+        # Inside the warning band: below halfway back to full recall, still above the
+        # 0.9 target that would make it due.
+        self.assertLess(faded["retention"], 0.95)
+        self.assertGreater(faded["retention"], 0.9)
+        later = self.engine.recall_candidates("이벤트 루프의 준비 큐", AT + timedelta(days=400))
+        self.assertEqual(
+            next(entry for entry in later if entry["id"] == item["id"])["mode"], "retrieval"
+        )
+
     def test_tutor_contract_has_teach_first_and_retrieval_modes(self):
         self.init_profile()
         anchor = self.engine.knowledge_add(
@@ -1473,12 +1565,12 @@ class AdvisorTutorLoopTests(EngineTestCase):
         self.assertEqual(taught["last_teaching"]["phase"], "exposure")
         self.assertEqual(taught["memory"]["stability_days"], 1.0)
         self.assertEqual(taught["memory"]["review_count"], 0)
-        contract = (ROOT / "agents" / "tutor.md").read_text(encoding="utf-8")
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for requirement in (
-            "새 학습·설명 요청·만기 전 약점",
-            "질문으로 시험하지 말고 `tutor teach`로 먼저 알려준다",
-            "만기 후 retrieval",
-            "힌트와 설명 없이 질문부터",
+            "새 학습과 만기 전 약점",
+            "질문으로 시험하지 않고 `tutor teach`로 먼저 알려준다",
+            "만기 뒤 독립 답변만 `retrieval`이다",
+            "힌트 없는 retrieval review",
             "학습 세션 전체를 문답식 심문으로 만들지 않는다",
         ):
             self.assertIn(requirement, contract)
@@ -2233,6 +2325,61 @@ class OrchestratorWorkflowTests(EngineTestCase):
                 }, later,
             )
 
+    def test_open_weak_point_does_not_pin_forward_learning_to_that_knowledge(self):
+        self.init_curriculum()
+        materials, _ = self.ready_shelf()
+        stuck = self.engine.knowledge_add(
+            "예전 주제", "약점이 열린 채로 남아 있다", "concept", ["경계 조건"], [],
+            [materials[0]["id"]], AT,
+        )
+        self.assertTrue(self.engine.knowledge()[0]["weak_points"])
+        learn = self.engine.workflow_start("learn", "다른 주제를 배우고 싶다", AT)
+        tutor_step = next(step for step in learn["steps"] if step["role"] == "tutor")
+        self.assertEqual(tutor_step["expected_resource_ids"], [])
+        # An explicit review is still pinned to the due item.
+        prepare_retrieval(self.engine, stuck)
+        due = AT + timedelta(days=400)
+        review = self.engine.workflow_start("review", "만기 복습", due)
+        pinned = next(step for step in review["steps"] if step["role"] == "tutor")
+        self.assertEqual(pinned["expected_resource_ids"], [stuck["id"]])
+
+    def test_abandoned_handoff_frees_the_role_slot_and_cancels_its_step(self):
+        self.init_curriculum()
+        self.ready_shelf()
+        workflow = self.engine.workflow_start("learn", "중단될 학습", AT)
+        first = self.engine.workflow_next(workflow["id"], "경로", AT)["handoff"]
+        with self.assertRaisesRegex(ValueError, "requires a reason"):
+            self.engine.handoff_abandon(first["id"], "   ", AT)
+        abandoned = self.engine.handoff_abandon(first["id"], "학습자가 주제를 바꿈", AT)
+        self.assertEqual(abandoned["status"], "cancelled")
+        self.assertEqual(abandoned["abandoned_reason"], "학습자가 주제를 바꿈")
+        with self.assertRaisesRegex(ValueError, "only an open handoff"):
+            self.engine.handoff_abandon(first["id"], "두 번은 안 된다", AT)
+        stopped = self.engine.workflow_show(workflow["id"])
+        self.assertEqual(stopped["status"], "cancelled")
+        self.assertEqual(stopped["steps"][0]["status"], "cancelled")
+        # The role slot is free again, so a fresh path can start.
+        retry = self.engine.workflow_start("learn", "새 주제", AT)
+        again = self.engine.workflow_next(retry["id"], "경로", AT)["handoff"]
+        self.assertEqual(
+            self.engine.handoff_claim(again["id"], again["to"], AT)["status"], "in_progress"
+        )
+
+    def test_reported_handoffs_summarize_the_reuse_snapshot_instead_of_inlining_it(self):
+        self.init_curriculum()
+        self.ready_shelf()
+        workflow = self.engine.workflow_start("learn", "스냅샷 확인", AT)
+        handoff = self.engine.workflow_next(workflow["id"], "경로", AT)["handoff"]
+        self.assertNotIn("resource_snapshot", handoff)
+        self.assertIn("resource_snapshot_ids", handoff)
+        stored = next(
+            item for item in self.store.load()["handoffs"] if item["id"] == handoff["id"]
+        )
+        # The fingerprints stay in state; only the report is trimmed.
+        self.assertEqual(sorted(stored["resource_snapshot"]), handoff["resource_snapshot_ids"])
+        for reported in self.engine.handoff_inbox("advisor") + self.engine.handoff_list():
+            self.assertNotIn("resource_snapshot", reported)
+
     def test_pre_due_weak_point_uses_teaching_not_retrieval_mode(self):
         self.init_curriculum()
         materials, _ = self.ready_shelf()
@@ -2243,7 +2390,9 @@ class OrchestratorWorkflowTests(EngineTestCase):
         workflow = self.engine.workflow_start("learn", "약점 보강", AT)
         tutor_step = workflow["steps"][1]
         self.assertEqual(tutor_step["output_kind"], "step_knowledge")
-        self.assertEqual(tutor_step["expected_resource_ids"], [knowledge["id"]])
+        # Teaching mode, but not pinned: forward learning must stay free to move to a new
+        # concept even while an older weak point is still open.
+        self.assertEqual(tutor_step["expected_resource_ids"], [])
         advisor = self.engine.workflow_next(workflow["id"], "보강 목표", AT)["handoff"]
         self.engine.handoff_claim(advisor["id"], "advisor", AT)
         goal = self.engine.learning_goal_add(
@@ -3175,41 +3324,48 @@ class RoleContractTests(unittest.TestCase):
 
 
 class AgentSpecTests(unittest.TestCase):
-    def test_six_agents_have_distinct_specs_and_domain_ownership(self):
+    def test_all_six_roles_are_contracted_in_agents_md_with_domain_ownership(self):
         names = ("orchestrator", "advisor", "librarian", "tutor", "editor", "roommate")
-        specs = {}
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for name in names:
-            path = ROOT / "agents" / f"{name}.md"
-            self.assertTrue(path.is_file(), f"missing agent spec: {path}")
-            text = path.read_text(encoding="utf-8")
-            self.assertIn(f"name: {name}", text)
-            self.assertIn(f"actor: {name}", text)
-            self.assertIn("## Input contract", text)
-            self.assertIn("## Output contract", text)
-            specs[name] = text
+            self.assertIn(f"### {name.capitalize()}", contract)
+            self.assertIn(f"python3 become.py --actor {name} {name}", contract)
         for name in names[1:]:
-            self.assertIn(f"python3 become.py --actor {name} {name}", specs[name])
             for other in set(names[1:]) - {name}:
-                self.assertNotIn(f"--actor {name} {other}", specs[name])
-        self.assertIn("python3 become.py --actor orchestrator orchestrator dispatch", specs["orchestrator"])
-        editor_allowed = specs["editor"].split("## Allowed commands", 1)[1].split(
-            "## Learner submission interface", 1
-        )[0]
-        self.assertNotIn("--actor learner", editor_allowed)
-        self.assertIn("`--actor learner`를 자칭해서는 안 된다", specs["editor"])
+                self.assertNotIn(f"--actor {name} {other}", contract)
+        self.assertIn("python3 become.py --actor orchestrator orchestrator dispatch", contract)
+        self.assertIn("`--actor learner`만 실행할 수 있다", contract)
+        self.assertNotIn("--actor editor editor add", contract)
+        self.assertNotIn("--actor editor editor revise", contract)
+
+    def test_librarian_is_the_only_role_run_in_a_separate_context(self):
+        specs = sorted(p.name for p in (ROOT / "agents").glob("*.md"))
+        self.assertEqual(specs, ["librarian.md"])
+        text = (ROOT / "agents" / "librarian.md").read_text(encoding="utf-8")
+        self.assertIn("name: librarian", text)
+        self.assertIn("actor: librarian", text)
+        self.assertIn("## Input contract", text)
+        self.assertIn("## Output contract", text)
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("Librarian만 별도 컨텍스트에서 실행한다", contract)
+        self.assertIn("Tutor는 별도 컨텍스트로 두지 않는다", contract)
 
     def test_orchestrator_keeps_review_metadata_internal(self):
-        contracts = (
-            (ROOT / "AGENTS.md").read_text(encoding="utf-8"),
-            (ROOT / "agents" / "orchestrator.md").read_text(encoding="utf-8"),
-        )
-        for contract in contracts:
-            self.assertIn("rating·confidence·rationale", contract)
-            self.assertIn("내부", contract)
-            self.assertNotIn("원문 그대로 먼저 보여", contract)
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("rating·confidence·rationale", contract)
+        self.assertIn("내부", contract)
+        self.assertNotIn("원문 그대로 먼저 보여", contract)
 
 
 class AuthorizationTests(CliTestCase):
+    def test_recall_is_read_only_and_needs_no_claimed_handoff(self):
+        self.init_profile()
+        item = self.engine.knowledge_add(
+            "이벤트 루프", "준비 큐에서 하나씩 꺼내 실행한다", "concept", ["큐 순서"], [], [], AT
+        )
+        found = self.cli("tutor", "recall", "--topic", "이벤트 루프의 준비 큐")
+        self.assertEqual([entry["id"] for entry in found], [item["id"]])
+
     def test_different_specialists_can_claim_work_in_parallel(self):
         advisor = self.cli(
             "orchestrator", "dispatch", "--to", "advisor", "--task", "경로 갱신",
