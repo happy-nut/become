@@ -1307,15 +1307,15 @@ class TutorConnectionTests(EngineTestCase):
         self.assertEqual(completed["status"], "completed")
 
     def test_tutor_contract_requires_confusion_why_chain_and_known_concepts(self):
-        text = (ROOT / "agents" / "tutor.md").read_text(encoding="utf-8")
+        text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for requirement in (
-            "혼동을 진단한다",
+            "정의·인과·조건·경계·순서·트레이드오프",
             "왜 쓰는가",
             "왜 이렇게 되었는가",
             "왜 이 결과가 나오는가",
             "커넥팅 더 닷",
-            "사용자가 아는 개념",
-            "어디서 비유가 깨지는지도",
+            "학습자가 안다고 확인되지 않은 개념",
+            "비유가 어디서 깨지는지도",
             "tutor context",
             "tutor relate",
         ):
@@ -1473,12 +1473,12 @@ class AdvisorTutorLoopTests(EngineTestCase):
         self.assertEqual(taught["last_teaching"]["phase"], "exposure")
         self.assertEqual(taught["memory"]["stability_days"], 1.0)
         self.assertEqual(taught["memory"]["review_count"], 0)
-        contract = (ROOT / "agents" / "tutor.md").read_text(encoding="utf-8")
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for requirement in (
-            "새 학습·설명 요청·만기 전 약점",
-            "질문으로 시험하지 말고 `tutor teach`로 먼저 알려준다",
-            "만기 후 retrieval",
-            "힌트와 설명 없이 질문부터",
+            "새 학습과 만기 전 약점",
+            "질문으로 시험하지 않고 `tutor teach`로 먼저 알려준다",
+            "만기 뒤 독립 답변만 `retrieval`이다",
+            "힌트 없는 retrieval review",
             "학습 세션 전체를 문답식 심문으로 만들지 않는다",
         ):
             self.assertIn(requirement, contract)
@@ -3175,38 +3175,37 @@ class RoleContractTests(unittest.TestCase):
 
 
 class AgentSpecTests(unittest.TestCase):
-    def test_six_agents_have_distinct_specs_and_domain_ownership(self):
+    def test_all_six_roles_are_contracted_in_agents_md_with_domain_ownership(self):
         names = ("orchestrator", "advisor", "librarian", "tutor", "editor", "roommate")
-        specs = {}
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
         for name in names:
-            path = ROOT / "agents" / f"{name}.md"
-            self.assertTrue(path.is_file(), f"missing agent spec: {path}")
-            text = path.read_text(encoding="utf-8")
-            self.assertIn(f"name: {name}", text)
-            self.assertIn(f"actor: {name}", text)
-            self.assertIn("## Input contract", text)
-            self.assertIn("## Output contract", text)
-            specs[name] = text
+            self.assertIn(f"### {name.capitalize()}", contract)
+            self.assertIn(f"python3 become.py --actor {name} {name}", contract)
         for name in names[1:]:
-            self.assertIn(f"python3 become.py --actor {name} {name}", specs[name])
             for other in set(names[1:]) - {name}:
-                self.assertNotIn(f"--actor {name} {other}", specs[name])
-        self.assertIn("python3 become.py --actor orchestrator orchestrator dispatch", specs["orchestrator"])
-        editor_allowed = specs["editor"].split("## Allowed commands", 1)[1].split(
-            "## Learner submission interface", 1
-        )[0]
-        self.assertNotIn("--actor learner", editor_allowed)
-        self.assertIn("`--actor learner`를 자칭해서는 안 된다", specs["editor"])
+                self.assertNotIn(f"--actor {name} {other}", contract)
+        self.assertIn("python3 become.py --actor orchestrator orchestrator dispatch", contract)
+        self.assertIn("`--actor learner`만 실행할 수 있다", contract)
+        self.assertNotIn("--actor editor editor add", contract)
+        self.assertNotIn("--actor editor editor revise", contract)
+
+    def test_librarian_is_the_only_role_run_in_a_separate_context(self):
+        specs = sorted(p.name for p in (ROOT / "agents").glob("*.md"))
+        self.assertEqual(specs, ["librarian.md"])
+        text = (ROOT / "agents" / "librarian.md").read_text(encoding="utf-8")
+        self.assertIn("name: librarian", text)
+        self.assertIn("actor: librarian", text)
+        self.assertIn("## Input contract", text)
+        self.assertIn("## Output contract", text)
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("Librarian만 별도 컨텍스트에서 실행한다", contract)
+        self.assertIn("Tutor는 별도 컨텍스트로 두지 않는다", contract)
 
     def test_orchestrator_keeps_review_metadata_internal(self):
-        contracts = (
-            (ROOT / "AGENTS.md").read_text(encoding="utf-8"),
-            (ROOT / "agents" / "orchestrator.md").read_text(encoding="utf-8"),
-        )
-        for contract in contracts:
-            self.assertIn("rating·confidence·rationale", contract)
-            self.assertIn("내부", contract)
-            self.assertNotIn("원문 그대로 먼저 보여", contract)
+        contract = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("rating·confidence·rationale", contract)
+        self.assertIn("내부", contract)
+        self.assertNotIn("원문 그대로 먼저 보여", contract)
 
 
 class AuthorizationTests(CliTestCase):

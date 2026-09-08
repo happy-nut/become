@@ -16,7 +16,7 @@ Orchestrator  workflow order, dependencies, interruption and resumption
 └─ Roommate   questions through a deliberately different field
 ```
 
-`AGENTS.md` is the coordinator contract, `agents/*.md` defines each specialist's isolated responsibilities and
+`AGENTS.md` is the single contract for every role, `agents/librarian.md` is a prompt copy for the one role that runs in a separate context, and
 permissions, and `become.py` stores and validates their outputs. It uses only the Python standard library.
 Real specialist contexts run in the current agent host (Claude Code, Codex CLI, and similar).
 
@@ -164,7 +164,7 @@ migration, source gating, memory timing, and a complete six-role journey.
 ```text
 become.py       local execution and state engine
 AGENTS.md       Orchestrator contract
-agents/         five specialist contracts
+agents/         librarian prompt copy (the only role run in a separate context)
 tests/          role, migration, and journey verification
 .become/        Git-ignored personal data
 ```
