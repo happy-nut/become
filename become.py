@@ -833,7 +833,7 @@ class Store:
             request_resource_ids = workflow.get("request_resource_ids")
             request_spec = workflow.get("request_spec")
             if (
-                workflow.get("status") not in {"active", "completed", "superseded"}
+                workflow.get("status") not in {"active", "completed", "superseded", "cancelled"}
                 or not isinstance(steps, list)
                 or not steps
                 or not isinstance(request_resource_ids, list)
@@ -1164,6 +1164,12 @@ class Store:
         for item in state["knowledge"]:
             item.setdefault("active", True)
             item.setdefault("produced_by_handoff_id", None)
+            memory = item.get("memory", {})
+            if "applied_at" not in memory:
+                # first_exposed_at starts as the creation time and is overwritten only by
+                # the first application review, so a difference is proof that it happened.
+                applied = memory.get("first_exposed_at")
+                memory["applied_at"] = applied if applied != item.get("created_at") else None
             item.setdefault(
                 "interaction_count",
                 item.get("memory", {}).get("exposure_count", 0)
@@ -1452,13 +1458,50 @@ class Engine:
             re.findall(r"[0-9a-z가-힣]+", unicodedata.normalize("NFKC", value).casefold())
         )
 
+    RECALL_PROMPTS = {
+        "retrieval": (
+            "이 주제는 저번에 배운 ‘{title}’와 이어집니다. "
+            "자료를 보지 않고 자신의 말로 다시 설명해 보세요."
+        ),
+        "refresh": (
+            "저번에 ‘{title}’를 다뤘는데 지금쯤 흐릿해졌을 시점입니다. "
+            "시험하지 말고 한두 문장으로 먼저 되짚어 준 뒤 이번 설명으로 이어가세요."
+        ),
+        "mention": (
+            "‘{title}’와 이어지는 주제입니다. 아직 또렷할 시점이니 "
+            "한 문장으로 상기만 시키고 바로 이번 설명으로 들어가세요."
+        ),
+    }
+
     def recall_candidates(self, topic: str, at: datetime) -> list[dict]:
-        """Due retrievals related to the topic being taught, for casual interleaving."""
+        """Prior knowledge that overlaps the topic being taught, with how to reopen it.
+
+        Forgetting is continuous, so this is not limited to items past their due date:
+        an anchor the learner half-remembers should be refreshed kindly rather than
+        quizzed, and only a genuinely due item is asked for unaided retrieval.
+        """
         if not topic.strip():
             raise ValueError("recall topic is required")
+        state = self.store.load()
+        profile = state.get("profile") or {}
+        target = profile.get("target_retention", 0.9)  # due threshold; refresh warns above it
         topic_tokens = self._text_tokens(topic)
+        due_ids = {item["id"] for item in self._due_from_state(state, at)}
         results = []
-        for item in self._due_from_state(self.store.load(), at):
+        for item in state["knowledge"]:
+            if not item.get("active", True):
+                continue
+            retention = self.retention(item["memory"], at)
+            # Mode is about forgetting, not about confusion: an open weak point travels
+            # in its own field so a freshly taught concept is not called faded. due_at is
+            # exactly where retention reaches the target, so "faded but not due" needs a
+            # warning band above it — halfway back to full recall.
+            if item["id"] in due_ids:
+                mode = "retrieval"
+            elif retention < (1.0 + target) / 2:
+                mode = "refresh"
+            else:
+                mode = "mention"
             item_tokens = self._text_tokens(
                 " ".join([item["title"], item["explanation"], *item["weak_points"]])
             )
@@ -1477,13 +1520,15 @@ class Engine:
                 results.append({
                     "id": item["id"],
                     "title": item["title"],
-                    "retention": item["retention"],
+                    "retention": retention,
                     "due_at": item["memory"]["due_at"],
-                    "overlap": sorted(overlap),
-                    "prompt": (
-                        f"이 주제는 저번에 배운 ‘{item['title']}’와 이어집니다. "
-                        "자료를 보지 않고 자신의 말로 다시 설명해 보세요."
+                    "mode": mode,
+                    "weak_points": list(item["weak_points"]),
+                    "same_subject": item.get("subject_binding") == (
+                        self._subject_binding(state) if profile else None
                     ),
+                    "overlap": sorted(overlap),
+                    "prompt": self.RECALL_PROMPTS[mode].format(title=item["title"]),
                 })
         results.sort(
             key=lambda entry: (entry["retention"], -len(entry["overlap"]), entry["title"].casefold())
@@ -1661,7 +1706,8 @@ class Engine:
             ]
             if len(matches) != 1:
                 raise ValueError(
-                    "Advisor evidence must match exactly one completed Tutor dependency"
+                    "Advisor evidence must repeat one observation of a completed Tutor "
+                    "dependency verbatim"
                 )
             source_id = matches[0]["id"]
             handoffs = {item["id"]: item for item in state["handoffs"]}
@@ -2454,6 +2500,24 @@ class Engine:
         if not proposal:
             return advice
         item = self._find(state["knowledge"], proposal["knowledge_id"], "knowledge")
+        # Maintenance-mode knowledge from a previous major can only be reopened through a
+        # review workflow: a learn step expects knowledge grounded in the current shelf,
+        # so writing this goal here would build a path the Tutor can never complete.
+        if state.get("profile") and item.get("subject_binding") != self._subject_binding(state):
+            workflow = next(
+                (
+                    flow
+                    for flow in state["workflows"]
+                    for step in flow["steps"]
+                    if step.get("handoff_id") == self.write_scope
+                ),
+                None,
+            )
+            if workflow and workflow["intent"] == "learn":
+                raise ValueError(
+                    "a previous major's knowledge is due for retrieval; "
+                    "route it with --intent review instead of learn"
+                )
         if not item.get("confusion_history") and item["weak_points"]:
             self._record_confusions(item, item["weak_points"], [], at)
         goal = self._upsert_learning_goal(state, at=at, **proposal)
@@ -2906,7 +2970,11 @@ class Engine:
 
     @staticmethod
     def _ready_for_retrieval(item: dict) -> bool:
-        if item.get("memory", {}).get("review_count", 0) > 0:
+        memory = item.get("memory", {})
+        # The forgetting clock starts at the first application review and never stops:
+        # re-teaching a faded concept must not drop it out of retrieval forever, so this
+        # reads a latch rather than comparing the most recent teaching and application.
+        if memory.get("review_count", 0) > 0 or memory.get("applied_at"):
             return True
         teaching = item.get("last_teaching") or {}
         application = item.get("last_interaction") or {}
@@ -3065,6 +3133,7 @@ class Engine:
                 "memory": {
                     "stability_days": stability,
                     "first_exposed_at": iso(at),
+                    "applied_at": None,
                     "last_reviewed_at": None,
                     "due_at": iso(at + timedelta(days=interval)),
                     "exposure_count": 0,
@@ -3120,8 +3189,16 @@ class Engine:
             raise ValueError("knowledge cannot relate to itself")
         state = self.store.load()
         self._profile(state)
-        left = self._current_knowledge(state, left_id)
-        right = self._current_knowledge(state, right_id)
+        # One side anchors the link in the current subject; the other may be retained
+        # knowledge from a previous major, which is the only way a cross-subject
+        # connection can ever be recorded.
+        left = self._retained_knowledge(state, left_id)
+        right = self._retained_knowledge(state, right_id)
+        binding = self._subject_binding(state)
+        if binding not in (left.get("subject_binding"), right.get("subject_binding")):
+            raise ValueError(
+                "at least one side of a relation must belong to the current learning target"
+            )
         left["related"] = unique(left["related"] + [right_id])
         right["related"] = unique(right["related"] + [left_id])
         left["updated_at"] = right["updated_at"] = iso(at)
@@ -3129,6 +3206,47 @@ class Engine:
         self._stamp(state, right, "tutor")
         self.store.save(state)
         return {"left": left_id, "right": right_id}
+
+    def handoff_abandon(self, handoff_id: str, reason: str, at: datetime) -> dict:
+        """Close a handoff the learning path has moved past.
+
+        Without this the only cancellation path is a goal change, so a handoff dropped
+        mid-session stays pending forever and keeps its role's single slot occupied.
+        """
+        if not reason.strip():
+            raise ValueError("abandoning a handoff requires a reason")
+        state = self.store.load()
+        handoff = self._find(state["handoffs"], handoff_id, "handoff")
+        if handoff["status"] not in {"pending", "in_progress"}:
+            raise ValueError(f"only an open handoff can be abandoned: {handoff['status']}")
+        handoff.update(
+            {"status": "cancelled", "abandoned_reason": reason.strip(), "updated_at": iso(at)}
+        )
+        workflow_id = handoff.get("workflow_id")
+        if workflow_id:
+            # The remaining steps depend on the one being dropped, so the whole path
+            # closes with it rather than leaving orphaned steps that can never start.
+            workflow = self._find(state["workflows"], workflow_id, "workflow")
+            if workflow["status"] == "active":
+                workflow["status"] = "cancelled"
+                workflow["updated_at"] = iso(at)
+                for step in workflow["steps"]:
+                    if step["status"] != "completed":
+                        step["status"] = "cancelled"
+                for other in state["handoffs"]:
+                    if (
+                        other.get("workflow_id") == workflow_id
+                        and other["status"] in {"pending", "in_progress"}
+                    ):
+                        other.update(
+                            {
+                                "status": "cancelled",
+                                "abandoned_reason": reason.strip(),
+                                "updated_at": iso(at),
+                            }
+                        )
+        self.store.save(state)
+        return handoff
 
     def due(self, at: datetime) -> list[dict]:
         state = self.store.load()
@@ -3142,37 +3260,56 @@ class Engine:
         state = self.store.load()
         profile = self._profile(state)
         item = self._retained_knowledge(state, item_id)
-        related = [
+        peers = [
             anchor
             for anchor in (
                 self._find(state["knowledge"], related_id, "knowledge")
                 for related_id in item.get("related", [])
             )
             if anchor.get("active", True)
-            and anchor.get("subject_binding") == item.get("subject_binding")
         ]
         baseline = (
             (profile.get("curriculum") or {}).get("baseline", {})
             if item.get("subject_binding") == self._subject_binding(state)
             else {}
         )
-        candidates = [
-            ({"kind": "knowledge", "id": known["id"]}, known["title"])
-            for known in related
-        ] + [
-            ({"kind": "curriculum_baseline", "value": value}, value)
-            for value in baseline.get("can_do", []) + baseline.get("assisted", [])
-        ]
         connection_tokens = self._text_tokens(connection)
-        scored = [
-            (
-                1 if canonical_text(anchor) in canonical_text(connection) else 0,
-                len(connection_tokens & self._text_tokens(anchor)),
-                basis,
-            )
-            for basis, anchor in candidates
-            if connection_tokens & self._text_tokens(anchor)
+
+        def rank(candidates: list[tuple[dict, str]]) -> list[tuple[int, int, dict]]:
+            return [
+                (
+                    1 if canonical_text(anchor) in canonical_text(connection) else 0,
+                    len(connection_tokens & self._text_tokens(anchor)),
+                    basis,
+                )
+                for basis, anchor in candidates
+                if connection_tokens & self._text_tokens(anchor)
+            ]
+
+        # Anchors are tried in order, and a real concept always outranks the baseline
+        # string Advisor wrote. Peers that are not related yet must be named verbatim,
+        # which keeps a wide pool unambiguous while still letting the graph grow.
+        named = canonical_text(connection)
+        unrelated = [
+            anchor
+            for anchor in state["knowledge"]
+            if anchor["id"] != item_id
+            and anchor["id"] not in item.get("related", [])
+            and anchor.get("active", True)
+            and anchor.get("subject_binding") == item.get("subject_binding")
+            and anchor.get("interaction_count", 0) > 0
+            and canonical_text(anchor["title"]) in named
         ]
+        scored = (
+            rank([({"kind": "knowledge", "id": known["id"]}, known["title"]) for known in peers])
+            or rank([({"kind": "knowledge", "id": known["id"]}, known["title"]) for known in unrelated])
+            or rank(
+                [
+                    ({"kind": "curriculum_baseline", "value": value}, value)
+                    for value in baseline.get("can_do", []) + baseline.get("assisted", [])
+                ]
+            )
+        )
         best = max((score[:2] for score in scored), default=None)
         matches = [basis for exact, overlap, basis in scored if (exact, overlap) == best]
         if len(matches) != 1:
@@ -3180,6 +3317,14 @@ class Engine:
                 "teaching connection must name exactly one related knowledge or curriculum baseline"
             )
         basis = matches[0]
+        if basis["kind"] == "knowledge" and basis["id"] not in item["related"]:
+            # A connection the engine just verified is a real edge; record it so the graph
+            # grows from teaching instead of waiting for an explicit relate.
+            anchor = self._find(state["knowledge"], basis["id"], "knowledge")
+            item["related"] = unique(item["related"] + [basis["id"]])
+            anchor["related"] = unique(anchor["related"] + [item_id])
+            anchor["updated_at"] = iso(at)
+            self._stamp(state, anchor, "tutor")
         memory = item["memory"]
         item["interaction_count"] += 1
         event = {
@@ -3277,6 +3422,7 @@ class Engine:
             teaching = item.get("last_teaching") or {}
             if not ready_before and teaching.get("sequence", 0) < item["interaction_count"]:
                 memory["first_exposed_at"] = iso(at)
+                memory["applied_at"] = iso(at)
                 memory["due_at"] = iso(
                     at
                     + timedelta(
@@ -4087,7 +4233,7 @@ class Engine:
             request_spec,
         )
         self.store.save(state)
-        return handoff
+        return self._reported_handoff(handoff)
 
     def workflow_start(
         self,
@@ -4143,9 +4289,10 @@ class Engine:
         if intent == "review" and not due:
             raise ValueError("no due retrieval to review right now")
         retrieval_ids = [due[0]["id"]] if intent == "review" and due else []
-        tutor_target_ids = retrieval_ids or [
-            item["id"] for item in self._current_weak_items(state)
-        ][:1]
+        # Only an explicit review pins the Tutor to one knowledge id. Pinning forward
+        # learning to an open weak point would trap the learner on that concept, because
+        # weak points are deliberately hard to clear.
+        tutor_target_ids = retrieval_ids
         workflow = {
             "id": f"workflow-{uuid.uuid4().hex[:8]}",
             "intent": intent,
@@ -4271,7 +4418,7 @@ class Engine:
         step["handoff_id"] = handoff["id"]
         workflow["updated_at"] = iso(at)
         self.store.save(state)
-        return {"workflow": workflow, "handoff": handoff}
+        return {"workflow": workflow, "handoff": self._reported_handoff(handoff)}
 
     def workflow_show(self, workflow_id: str) -> dict:
         return self._find(self.store.load()["workflows"], workflow_id, "workflow")
@@ -4282,13 +4429,26 @@ class Engine:
             if status not in {"pending", "in_progress", "completed", "cancelled"}:
                 raise ValueError("handoff status must be pending, in_progress, completed, or cancelled")
             handoffs = [handoff for handoff in handoffs if handoff["status"] == status]
-        return handoffs
+        return [self._reported_handoff(handoff) for handoff in handoffs]
+
+    @staticmethod
+    def _reported_handoff(handoff: dict) -> dict:
+        """A handoff as it is reported out, without the reuse fingerprints.
+
+        resource_snapshot carries a full copy of every role resource so reuse can be
+        detected on completion. It is state, not context: reporting it verbatim puts tens
+        of kilobytes of curriculum into a reader's window on every inbox call.
+        """
+        reported = copy.deepcopy(handoff)
+        snapshot = reported.pop("resource_snapshot", {}) or {}
+        reported["resource_snapshot_ids"] = sorted(snapshot)
+        return reported
 
     def handoff_inbox(self, actor: str) -> list[dict]:
         if actor not in SPECIALISTS:
             raise ValueError("only specialist agents have an inbox")
         return [
-            handoff
+            self._reported_handoff(handoff)
             for handoff in self.store.load()["handoffs"]
             if handoff["to"] == actor and handoff["status"] in {"pending", "in_progress"}
         ]
@@ -4373,7 +4533,7 @@ class Engine:
         handoff["status"] = "in_progress"
         handoff["claimed_at"] = iso(at)
         self.store.save(state)
-        return handoff
+        return self._reported_handoff(handoff)
 
     @staticmethod
     def _role_resources(state: dict, role: str) -> list[dict]:
@@ -4841,7 +5001,7 @@ class Engine:
                 workflow["status"] = "completed"
             workflow["updated_at"] = iso(at)
         self.store.save(state)
-        return handoff
+        return self._reported_handoff(handoff)
 
 
 def output(value) -> None:
@@ -4911,6 +5071,9 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_list.add_argument(
         "--status", choices=("pending", "in_progress", "completed", "cancelled")
     )
+    abandon = orchestrator_commands.add_parser("abandon")
+    abandon.add_argument("handoff_id")
+    abandon.add_argument("--reason", required=True)
     orchestrator_commands.add_parser("inbox")
     claim = orchestrator_commands.add_parser("claim")
     claim.add_argument("handoff_id")
@@ -5071,7 +5234,8 @@ def authorize(actor: str, role: str, command: str) -> None:
             raise ValueError(f"actor {actor} is not authorized for {role} commands")
         return
     if command in {
-        "dispatch", "list", "route", "workflow-start", "workflow-next", "workflow-show",
+        "dispatch", "abandon", "list", "route", "workflow-start", "workflow-next",
+        "workflow-show",
         "session-start", "session-note", "session-end", "session-resume",
     }:
         if actor != "orchestrator":
@@ -5085,7 +5249,7 @@ def authorize_specialist_write(engine: Engine, args: argparse.Namespace) -> None
     reads = {
         "advisor": {"goals", "status", "recommend"},
         "librarian": {"list", "prefetch"},
-        "tutor": {"list", "context", "due"},
+        "tutor": {"list", "context", "due", "recall"},
         "editor": {"show", "add", "revise"},
         "roommate": {"list"},
     }
@@ -5203,6 +5367,8 @@ def run(args: argparse.Namespace) -> object:
             return engine.session_end(args.summary, args.next, at)
         if args.command == "session-resume":
             return engine.resume(at)
+        if args.command == "abandon":
+            return engine.handoff_abandon(args.handoff_id, args.reason, at)
         if args.command == "list":
             return engine.handoff_list(args.status)
         if args.command == "inbox":
