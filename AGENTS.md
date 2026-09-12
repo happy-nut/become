@@ -132,8 +132,11 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
 - 학습자가 아직 한 번도 통과하지 못한 step은 형식적 정의나 정량적 증명으로 시작하지 않는다. 가장 쉬운
   직관적 판단 → 정확한 정의·경계 사례 → 정량적/구현 수준 근거 순으로 난이도가 오르는 하위 목표로
   세분화하고, milestone의 pass_criteria도 그 순서를 따른다.
-- 현재 active step의 모든 milestone 증거가 있어야 다음 prerequisite-ready step이 열린다. 이전
-  curriculum version의 artifact는 재사용하지 않는다.
+- 현재 active step의 모든 milestone 증거가 있어야 다음 prerequisite-ready step이 "공식 진도"로
+  넘어간다(해당 step의 milestone을 완료 처리하는 것). 이 순서 규칙은 milestone 완료 인정 순서에만
+  적용되고, 학습자가 궁금해하는 주제를 아직 활성화되지 않은 later step이라는 이유로 Librarian
+  판정이나 Tutor teach 대상에서 제외하는 근거로 쓰지 않는다 — Advisor는 그런 주제도 적절한
+  knowledge·goal을 스스로 만들어 바로 다룬다. 이전 curriculum version의 artifact는 재사용하지 않는다.
 - 동일 spec 재제출은 version/history를 늘리지 않는다. 실제 수정 때도 증명 조건이 같은 완료 milestone은
   보존하고, cut list와 required step의 충돌은 거부한다.
 - 목표·핵심 focus가 바뀌면 이전 profile·curriculum은 history로 보존하고 다섯 결정을 Advisor가 새로
@@ -150,8 +153,10 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   `relevance: belongs|does_not_belong`, `credibility: credible|unverified`,
   `level_fit: appropriate|too_basic|too_advanced`, `signal: signal|noise`이고,
   disposition은 `core|supplement|reject`다. 축마다 판정 이유가 함께 필요하다.
-- verified·triaged signal 중 priority가 높은 3~4개만 shelf에 넣는다. 현재 active step이 아니거나
-  세 개 미만이면 Tutor를 열지 않는다. 판정한 모든 후보 id를 shelf 입력에 명시하며, 재검증에 실패한
+- verified·triaged signal 중 priority가 높은 3~4개만 shelf에 넣는다. 이 shelf는 curriculum의 어느
+  step을 대상으로 하든(활성 step이 아니어도) 유효하다 — 학습자가 명시적으로 물은 주제가 아직 활성화되지
+  않은 step에 속한다는 이유로 자료 판정과 Tutor 학습을 막지 않는다. 세 개 미만이면 Tutor를 열지 않는다.
+  판정한 모든 후보 id를 shelf 입력에 명시하며, 재검증에 실패한
   자료가 있으면 기존 shelf도 더는 ready가 아니다. 빈 원문과 `too_basic`·`too_advanced` 자료는
   core/supplement가 될 수 없다.
 - 현재 step이 학습자에게 처음 노출되는 step이면 형식적 정의·논문·표준 문서 수준만으로 core를 채우지
@@ -225,7 +230,10 @@ Editor는 전달할 학습자 결과물이 있을 때, Roommate는 전공 밖 �
   원리·불변식·차이를 말하고, 비유가 어디서 깨지는지도 함께 밝힌다. 표면이 닮았을 뿐인 것을 억지로
   연결하거나, 비유를 증명처럼 쓰거나, 학습자가 안다고 확인되지 않은 개념을 비유의 전제로 삼지 않는다.
 - 꼬리 질문은 방금 설명을 재생시키지 말고 그 연결을 새로운 사례로 옮겨 판단하게 한다. 이미 정확히
-  아는 층을 다시 길게 설명하느라 실제 혼동 지점에 늦게 도달하지 않는다.
+  아는 층을 다시 길게 설명하느라 실제 혼동 지점에 늦게 도달하지 않는다. 막힌 지점을 보충 설명으로
+  풀어준 직후에는, 그 설명 안에 이미 들어있는 결론을 그대로 되묻지 않는다. 방금 준 결론을 그대로
+  따라 말하게 하는 질문은 인출이 아니라 받아쓰기이므로, 같은 원리를 요구하되 결론 자체는 다른 새
+  사례로 질문을 옮긴다.
 - 학습자가 불확실함을 밝히면 `--confidence partial|failed`와 구체적인 `--add-weak`를 함께 넘긴다.
   설명을 들은 직후 맞게 답했다고 해서 약점을 지우지 않는다.
 - 실제 `--prompt`, `--answer`, `--rationale`, `--confidence`를 기록한다.

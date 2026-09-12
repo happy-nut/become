@@ -1461,17 +1461,18 @@ class Engine:
     RECALL_PROMPTS = {
         "retrieval": (
             "이 주제는 저번에 배운 ‘{title}’와 이어집니다. "
-            "자료를 보지 않고 자신의 말로 다시 설명해 보세요."
+            "자료를 보지 않고 자신의 말로 다시 설명해 보세요.{focus_clause}"
         ),
         "refresh": (
             "저번에 ‘{title}’를 다뤘는데 지금쯤 흐릿해졌을 시점입니다. "
-            "시험하지 말고 한두 문장으로 먼저 되짚어 준 뒤 이번 설명으로 이어가세요."
+            "시험하지 말고 한두 문장으로 먼저 되짚어 준 뒤 이번 설명으로 이어가세요.{focus_clause}"
         ),
         "mention": (
             "‘{title}’와 이어지는 주제입니다. 아직 또렷할 시점이니 "
             "한 문장으로 상기만 시키고 바로 이번 설명으로 들어가세요."
         ),
     }
+    RECALL_FOCUS_CLAUSE = " 특히 지난번에 걸렸던 지점을 짚어 주세요: {weak_point}"
 
     def recall_candidates(self, topic: str, at: datetime) -> list[dict]:
         """Prior knowledge that overlaps the topic being taught, with how to reopen it.
@@ -1528,7 +1529,14 @@ class Engine:
                         self._subject_binding(state) if profile else None
                     ),
                     "overlap": sorted(overlap),
-                    "prompt": self.RECALL_PROMPTS[mode].format(title=item["title"]),
+                    "prompt": self.RECALL_PROMPTS[mode].format(
+                        title=item["title"],
+                        focus_clause=(
+                            self.RECALL_FOCUS_CLAUSE.format(weak_point=item["weak_points"][-1])
+                            if mode in {"retrieval", "refresh"} and item["weak_points"]
+                            else ""
+                        ),
+                    ),
                 })
         results.sort(
             key=lambda entry: (entry["retention"], -len(entry["overlap"]), entry["title"].casefold())
@@ -3055,7 +3063,6 @@ class Engine:
         state = self.store.load()
         profile = self._profile(state)
         curriculum = profile.get("curriculum")
-        active_step = self._active_curriculum_step(curriculum)
         known_ids = {
             item["id"]
             for item in state["knowledge"]
@@ -3068,9 +3075,8 @@ class Engine:
         selected_ids = {
             material_id
             for shelf in state["shelves"]
-            if curriculum
-            and active_step
-            and self._shelf_is_ready(state, shelf, curriculum, active_step["id"])
+            for step in (curriculum.get("sequence", []) if curriculum else [])
+            if self._shelf_is_ready(state, shelf, curriculum, step["id"])
             for material_id in shelf["selected_material_ids"]
         }
         curated_sources = {
@@ -4584,23 +4590,23 @@ class Engine:
         if role == "librarian":
             if not curriculum:
                 return set()
-            active_step = self._active_curriculum_step(curriculum)
             return {
                 shelf["id"]
                 for shelf in state["shelves"]
-                if active_step
-                and self._shelf_is_ready(state, shelf, curriculum, active_step["id"])
+                for step in curriculum.get("sequence", [])
+                if self._shelf_is_ready(state, shelf, curriculum, step["id"])
             }
         if role == "tutor":
             if output_kind == "step_knowledge":
                 if not curriculum:
-                    return set()
-                active_step = self._active_curriculum_step(curriculum)
+                    return {
+                        item["id"] for item in state["knowledge"] if item.get("active", True)
+                    }
                 selected_material_ids = {
                     material_id
                     for shelf in state["shelves"]
-                    if active_step
-                    and self._shelf_is_ready(state, shelf, curriculum, active_step["id"])
+                    for step in curriculum.get("sequence", [])
+                    if self._shelf_is_ready(state, shelf, curriculum, step["id"])
                     for material_id in shelf["selected_material_ids"]
                 }
                 selected_sources = {
@@ -4613,7 +4619,10 @@ class Engine:
                     item["id"]
                     for item in state["knowledge"]
                     if item.get("active", True)
-                    and set(item.get("sources", [])) & selected_sources
+                    and (
+                        not item.get("sources")
+                        or set(item.get("sources", [])) & selected_sources
+                    )
                 }
             return {
                 item["id"] for item in state["knowledge"] if item.get("active", True)
